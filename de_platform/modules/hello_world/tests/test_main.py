@@ -1,27 +1,30 @@
-from de_platform.config.context import ModuleConfig, PlatformContext
+from de_platform.cli.runner import run_module
 from de_platform.services.logger.memory_logger import MemoryLogger
-
-from de_platform.modules.hello_world.main import run
 
 
 def test_run_default_name():
-    logger = MemoryLogger()
-    ctx = PlatformContext(log=logger, config=ModuleConfig({"name": "World"}))
-    result = run(ctx)
-    assert result == 0
-    assert "Hello, World!" in logger.messages
+    exit_code, module = run_module(["run", "hello_world", "--log", "memory"])
+    assert exit_code == 0
+    assert isinstance(module.log, MemoryLogger)
+    assert "Hello, World!" in module.log.messages
 
 
 def test_run_custom_name():
-    logger = MemoryLogger()
-    ctx = PlatformContext(log=logger, config=ModuleConfig({"name": "Alice"}))
-    result = run(ctx)
-    assert result == 0
-    assert "Hello, Alice!" in logger.messages
+    exit_code, module = run_module(["run", "hello_world", "--name", "Alice", "--log", "memory"])
+    assert exit_code == 0
+    assert isinstance(module.log, MemoryLogger)
+    assert "Hello, Alice!" in module.log.messages
 
 
 def test_run_returns_zero():
-    logger = MemoryLogger()
-    ctx = PlatformContext(log=logger, config=ModuleConfig({"name": "Test"}))
-    result = run(ctx)
-    assert result == 0
+    exit_code, _ = run_module(["run", "hello_world", "--name", "Test", "--log", "memory"])
+    assert exit_code == 0
+
+
+def test_env_override_sets_logger():
+    exit_code, module = run_module(
+        ["run", "hello_world", "--env", '{"LOG_IMPL": "memory"}']
+    )
+    assert exit_code == 0
+    assert isinstance(module.log, MemoryLogger)
+    assert "Hello, World!" in module.log.messages

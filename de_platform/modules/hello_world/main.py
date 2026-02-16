@@ -1,7 +1,17 @@
-from de_platform.config.context import PlatformContext
+from de_platform.modules.base import Module
+from de_platform.services.logger.interface import LoggingInterface
 
 
-def run(ctx: PlatformContext) -> int:
-    name = ctx.config.get("name")
-    ctx.log.info(f"Hello, {name}!")
-    return 0
+class HelloWorldModule(Module):
+    log: LoggingInterface
+
+    def initialize(self) -> None:
+        self.log = self.context.logger.create()
+
+    def execute(self) -> int:
+        name = self.context.config.get("name")
+        self.log.info(f"Hello, {name}!")
+        return 0
+
+
+module_class = HelloWorldModule

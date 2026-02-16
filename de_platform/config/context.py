@@ -1,7 +1,8 @@
+import os
 from dataclasses import dataclass
 from typing import Any
 
-from de_platform.services.logger.interface import LoggingInterface
+from de_platform.services.logger.factory import LoggerFactory
 
 
 class ModuleConfig:
@@ -20,9 +21,22 @@ class ModuleConfig:
         return f"ModuleConfig({self._args})"
 
 
+class PlatformConfig:
+    """Environment-based configuration with optional overrides."""
+
+    def __init__(self, overrides: dict[str, str] | None = None) -> None:
+        self._env = dict(os.environ)
+        if overrides:
+            self._env.update(overrides)
+
+    def get(self, key: str, default: str = "") -> str:
+        return self._env.get(key, default)
+
+
 @dataclass
 class PlatformContext:
     """Container for all platform interfaces available to a module."""
 
-    log: LoggingInterface
     config: ModuleConfig
+    env: PlatformConfig
+    logger: LoggerFactory

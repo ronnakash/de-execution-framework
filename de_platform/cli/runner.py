@@ -1,28 +1,20 @@
-import asyncio
 import importlib
 import json
 import sys
 from pathlib import Path
 from typing import Any
 
-from de_platform.config.context import ModuleConfig, PlatformContext
-from de_platform.services.logger.interface import LoggingInterface
-from de_platform.services.logger.memory_logger import MemoryLogger
-from de_platform.services.logger.pretty_logger import PrettyLogger
+from de_platform.config.context import ModuleConfig, PlatformConfig, PlatformContext
+from de_platform.modules.base import Module
+from de_platform.services.logger.factory import LoggerFactory
 
 MODULES_DIR = Path(__file__).resolve().parent.parent / "modules"
-
-LOGGER_REGISTRY: dict[str, type[LoggingInterface]] = {
-    "pretty": PrettyLogger,
-    "memory": MemoryLogger,
-}
 
 
 def load_module_descriptor(module_name: str) -> dict[str, Any]:
     module_json = MODULES_DIR / module_name / "module.json"
     if not module_json.exists():
-        print(f"Error: module '{module_name}' not found at {module_json}", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(f"module '{module_name}' not found at {module_json}")
     with open(module_json) as f:
         return json.load(f)
 
@@ -70,9 +62,7 @@ def parse_module_args(
                 )
 
     if errors:
-        for err in errors:
-            print(f"Error: {err}", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError("; ".join(errors))
 
     return result
 
@@ -89,11 +79,26 @@ def _cast_value(value: str, type_name: str) -> Any:
             return value
 
 
+def _parse_env_overrides(raw: str) -> dict[str, str]:
+    """Parse a JSON string into env overrides. Validates types."""
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("--env value must be a JSON object")
+    for k, v in data.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise ValueError("--env JSON must have string keys and string values")
+    return data
+
+
 def print_module_help(descriptor: dict[str, Any]) -> None:
-    print(f"\n  {descriptor['display_name']} v{descriptor['version']}")
+    version = descriptor.get("version", "")
+    version_suffix = f" v{version}" if version else ""
+    print(f"\n  {descriptor['display_name']}{version_suffix}")
     print(f"  {descriptor['description']}\n")
-    print(f"  Type: {descriptor['type']}")
-    print()
+    module_type = descriptor.get("type")
+    if module_type:
+        print(f"  Type: {module_type}")
+        print()
 
     args = descriptor.get("args", [])
     if args:
@@ -108,52 +113,74 @@ def print_module_help(descriptor: dict[str, Any]) -> None:
 
     print("  Global flags:")
     print(f"    --{'log':20s} Logging format: pretty, memory [default: pretty]")
+    print(f"    --{'env':20s} JSON string of env var overrides")
     print()
 
 
-def run_cli(argv: list[str] | None = None) -> None:
-    args = argv if argv is not None else sys.argv[1:]
+def run_module(argv: list[str]) -> tuple[int, Module]:
+    """Testable entry point: parses args, builds context, runs module, returns (exit_code, module)."""
+    if not argv or argv[0] != "run":
+        raise ValueError("Usage: python -m de_platform run <module_name> [flags] [module args]")
 
-    if not args or args[0] != "run":
-        print("Usage: python -m de_platform run <module_name> [flags] [module args]", file=sys.stderr)
-        sys.exit(1)
+    if len(argv) < 2:
+        raise ValueError("Usage: python -m de_platform run <module_name> [flags] [module args]")
 
-    if len(args) < 2:
-        print("Usage: python -m de_platform run <module_name> [flags] [module args]", file=sys.stderr)
-        sys.exit(1)
-
-    module_name = args[1]
-    remaining = args[2:]
+    module_name = argv[1]
+    remaining = argv[2:]
 
     descriptor = load_module_descriptor(module_name)
 
     # Check for --help
     if "--help" in remaining or "-h" in remaining:
         print_module_help(descriptor)
-        sys.exit(0)
+        return (0, None)  # type: ignore[return-value]
 
     # Extract global flags
     log_impl = "pretty"
+    env_overrides: dict[str, str] = {}
     filtered_args: list[str] = []
     i = 0
     while i < len(remaining):
         if remaining[i] == "--log" and i + 1 < len(remaining):
             log_impl = remaining[i + 1]
             i += 2
+        elif remaining[i] == "--env" and i + 1 < len(remaining):
+            env_overrides.update(_parse_env_overrides(remaining[i + 1]))
+            i += 2
         else:
             filtered_args.append(remaining[i])
             i += 1
 
+    # --log convenience: put it into env overrides so factory can read it
+    if "LOG_IMPL" not in env_overrides:
+        env_overrides["LOG_IMPL"] = log_impl
+
     # Parse module args
     module_args = parse_module_args(descriptor, filtered_args)
 
-    # Build context
-    logger_cls = LOGGER_REGISTRY.get(log_impl, PrettyLogger)
-    logger = logger_cls()
+    # Build context with factories
+    env = PlatformConfig(overrides=env_overrides)
+    logger_factory = LoggerFactory(default_impl=env.get("LOG_IMPL", "pretty"))
     config = ModuleConfig(module_args)
-    context = PlatformContext(log=logger, config=config)
+    context = PlatformContext(config=config, env=env, logger=logger_factory)
 
-    # Import and run module
-    module = importlib.import_module(f"de_platform.modules.{module_name}.main")
-    exit_code = module.run(context)
-    sys.exit(exit_code)
+    # Import module and find module_class
+    mod = importlib.import_module(f"de_platform.modules.{module_name}.main")
+    if not hasattr(mod, "module_class"):
+        raise AttributeError(
+            f"Module 'de_platform.modules.{module_name}.main' must define a 'module_class' attribute"
+        )
+
+    module_instance = mod.module_class(context)
+    exit_code = module_instance.run()
+    return (exit_code, module_instance)
+
+
+def run_cli(argv: list[str] | None = None) -> None:
+    args = argv if argv is not None else sys.argv[1:]
+    try:
+        exit_code, _ = run_module(args)
+        sys.exit(exit_code)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
