@@ -1,8 +1,5 @@
 import os
-from dataclasses import dataclass
 from typing import Any
-
-from de_platform.services.logger.factory import LoggerFactory
 
 
 class ModuleConfig:
@@ -31,12 +28,3 @@ class PlatformConfig:
 
     def get(self, key: str, default: str = "") -> str:
         return self._env.get(key, default)
-
-
-@dataclass
-class PlatformContext:
-    """Container for all platform interfaces available to a module."""
-
-    config: ModuleConfig
-    env: PlatformConfig
-    logger: LoggerFactory

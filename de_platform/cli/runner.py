@@ -4,7 +4,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from de_platform.config.context import ModuleConfig, PlatformConfig, PlatformContext
+from de_platform.config.container import Container
+from de_platform.config.context import ModuleConfig, PlatformConfig
 from de_platform.modules.base import Module
 from de_platform.services.logger.factory import LoggerFactory
 
@@ -158,11 +159,15 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
     # Parse module args
     module_args = parse_module_args(descriptor, filtered_args)
 
-    # Build context with factories
+    # Build container with factories
     env = PlatformConfig(overrides=env_overrides)
     logger_factory = LoggerFactory(default_impl=env.get("LOG_IMPL", "pretty"))
     config = ModuleConfig(module_args)
-    context = PlatformContext(config=config, env=env, logger=logger_factory)
+
+    container = Container()
+    container.register_instance(ModuleConfig, config)
+    container.register_instance(PlatformConfig, env)
+    container.register_factory(LoggerFactory, logger_factory)
 
     # Import module and find module_class
     mod = importlib.import_module(f"de_platform.modules.{module_name}.main")
@@ -171,7 +176,7 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
             f"Module 'de_platform.modules.{module_name}.main' must define a 'module_class' attribute"
         )
 
-    module_instance = mod.module_class(context)
+    module_instance = container.resolve(mod.module_class)
     exit_code = module_instance.run()
     return (exit_code, module_instance)
 

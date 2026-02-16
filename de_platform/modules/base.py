@@ -1,13 +1,8 @@
 from abc import ABC, abstractmethod
 
-from de_platform.config.context import PlatformContext
-
 
 class Module(ABC):
     """Base class for all platform modules with a standard lifecycle."""
-
-    def __init__(self, context: PlatformContext) -> None:
-        self.context = context
 
     def initialize(self) -> None:
         """Set up resources needed by the module. Override as needed."""
