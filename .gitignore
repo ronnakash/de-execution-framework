@@ -24,6 +24,7 @@ __pycache__/
 # Claude
 .claude/
 CLAUDE.md
+todo.md
 
 # Design docs
 data_platform_design_doc.md

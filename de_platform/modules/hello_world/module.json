@@ -2,12 +2,6 @@
   "name": "hello_world",
   "display_name": "Hello World",
   "description": "A minimal module that logs a greeting.",
-  "type": "job",
-  "version": "1.0.0",
-  "dependencies": {
-    "interfaces": ["logging"],
-    "modules": []
-  },
   "args": [
     {
       "name": "name",
