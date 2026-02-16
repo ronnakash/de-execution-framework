@@ -1,2 +1,37 @@
-.git
-.git/
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# pytest
+.pytest_cache/
+
+# Ruff
+.ruff_cache/
+
+# mypy
+.mypy_cache/
+
+# VS Code
+.vscode/
+
+# Claude
+.claude/
+
+# Environment files
+.env
+.env.*
+
+# Distribution / packaging
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
