@@ -1,7 +1,7 @@
 from de_platform.config.context import ModuleConfig, PlatformContext
-from de_platform.implementations.memory_logger import MemoryLogger
+from de_platform.services.logger.memory_logger import MemoryLogger
 
-from modules.hello_world.main import run
+from de_platform.modules.hello_world.main import run
 
 
 def test_run_default_name():

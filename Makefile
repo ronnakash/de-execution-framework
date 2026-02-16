@@ -1,13 +1,13 @@
 .PHONY: test lint format run
 
 test:
-	pytest modules/ -v
+	pytest de_platform/modules/ -v
 
 lint:
-	ruff check de_platform/ modules/
+	ruff check de_platform/
 
 format:
-	ruff format de_platform/ modules/
+	ruff format de_platform/
 
 run:
 	python -m de_platform run $(module) $(args)

@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from de_platform.interfaces.logging import LoggingInterface
+from de_platform.services.logger.interface import LoggingInterface
 
 _COLORS = {
     "INFO": "\033[32m",   # green

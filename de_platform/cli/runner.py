@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from de_platform.config.context import ModuleConfig, PlatformContext
-from de_platform.implementations.memory_logger import MemoryLogger
-from de_platform.implementations.pretty_logger import PrettyLogger
-from de_platform.interfaces.logging import LoggingInterface
+from de_platform.services.logger.interface import LoggingInterface
+from de_platform.services.logger.memory_logger import MemoryLogger
+from de_platform.services.logger.pretty_logger import PrettyLogger
 
-MODULES_DIR = Path(__file__).resolve().parent.parent.parent / "modules"
+MODULES_DIR = Path(__file__).resolve().parent.parent / "modules"
 
 LOGGER_REGISTRY: dict[str, type[LoggingInterface]] = {
     "pretty": PrettyLogger,
@@ -154,6 +154,6 @@ def run_cli(argv: list[str] | None = None) -> None:
     context = PlatformContext(log=logger, config=config)
 
     # Import and run module
-    module = importlib.import_module(f"modules.{module_name}.main")
-    exit_code = asyncio.run(module.run(context))
+    module = importlib.import_module(f"de_platform.modules.{module_name}.main")
+    exit_code = module.run(context)
     sys.exit(exit_code)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from de_platform.interfaces.logging import LoggingInterface
+from de_platform.services.logger.interface import LoggingInterface
 
 
 @dataclass
