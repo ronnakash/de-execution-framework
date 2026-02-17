@@ -1,33 +1,37 @@
-import os
+import asyncio
 
 import pytest
 
-POSTGRES_AVAILABLE = os.environ.get("DB_POSTGRES_URL") is not None
+pytest.importorskip("asyncpg")
 
-pytestmark = pytest.mark.skipif(not POSTGRES_AVAILABLE, reason="Postgres not available")
+from de_platform.services.database.postgres_database import PostgresDatabase  # noqa: E402
+from de_platform.services.secrets.env_secrets import EnvSecrets  # noqa: E402
 
 
 @pytest.fixture
-async def db():
-    from de_platform.services.database.postgres_database import PostgresDatabase
-    from de_platform.services.secrets.env_secrets import EnvSecrets
+def db(postgres_container):
+    """Connected PostgresDatabase backed by testcontainer."""
+    url = postgres_container.get_connection_url()
+    asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
+    secrets = EnvSecrets(overrides={"DB_TEST_URL": asyncpg_url})
+    database = PostgresDatabase(secrets=secrets, prefix="DB_TEST")
 
-    secrets = EnvSecrets()
-    database = PostgresDatabase(secrets)
-    await database.connect_async()
-    # Clean up test table
-    await database.execute_async("DROP TABLE IF EXISTS _test_pg")
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    loop.run_until_complete(database.connect_async())
+    loop.run_until_complete(database.execute_async("DROP TABLE IF EXISTS _test_pg"))
+
     yield database
-    await database.execute_async("DROP TABLE IF EXISTS _test_pg")
-    await database.disconnect_async()
+
+    loop.run_until_complete(database.execute_async("DROP TABLE IF EXISTS _test_pg"))
+    loop.run_until_complete(database.disconnect_async())
+    loop.close()
 
 
-async def test_connect_disconnect():
-    from de_platform.services.database.postgres_database import PostgresDatabase
-    from de_platform.services.secrets.env_secrets import EnvSecrets
-
-    secrets = EnvSecrets()
-    database = PostgresDatabase(secrets)
+async def test_connect_disconnect(postgres_container):
+    url = postgres_container.get_connection_url()
+    asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
+    secrets = EnvSecrets(overrides={"DB_TEST_URL": asyncpg_url})
+    database = PostgresDatabase(secrets=secrets, prefix="DB_TEST")
     await database.connect_async()
     assert database.is_connected()
     await database.disconnect_async()

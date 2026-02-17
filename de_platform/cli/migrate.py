@@ -1,29 +1,49 @@
-"""CLI subcommand for database migrations."""
+"""CLI subcommand for database migrations.
+
+Usage:
+    python -m de_platform migrate up warehouse --db postgres
+    python -m de_platform migrate down warehouse --count 1 --db postgres
+    python -m de_platform migrate status warehouse --db postgres
+    python -m de_platform migrate create warehouse add_users_table
+"""
 
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from de_platform.config.env_loader import load_env_file
-from de_platform.migrations.runner import MigrationRunner, VERSIONS_DIR
+from de_platform.migrations.runner import MIGRATIONS_DIR, MigrationRunner
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.registry import resolve_implementation
 from de_platform.services.secrets.env_secrets import EnvSecrets
 
 
 def _parse_migrate_args(argv: list[str]) -> dict[str, Any]:
-    """Parse migrate subcommand arguments."""
-    args: dict[str, Any] = {"command": None, "target": None, "count": 1, "name": None}
+    """Parse migrate subcommand arguments.
+
+    Format: <command> <db_name> [migration_name] [--db impl] [--count N] [--target N] [--env-file F]
+    """
+    args: dict[str, Any] = {
+        "command": None,
+        "db_name": None,
+        "target": None,
+        "count": 1,
+        "name": None,
+    }
     impl_flags: dict[str, str] = {}
     env_file: str | None = None
 
     if not argv:
-        raise ValueError("Usage: python -m de_platform migrate <up|down|status|create> [options]")
+        raise ValueError(
+            "Usage: python -m de_platform migrate <up|down|status|create> <db_name> [options]"
+        )
 
     args["command"] = argv[0]
+
+    # Second positional arg = database name
+    positionals: list[str] = []
     i = 1
     while i < len(argv):
         flag = argv[i]
@@ -40,17 +60,20 @@ def _parse_migrate_args(argv: list[str]) -> dict[str, Any]:
             env_file = argv[i + 1]
             i += 2
         else:
-            # Positional arg (e.g. migration name for 'create')
-            if args["name"] is None:
-                args["name"] = argv[i]
+            positionals.append(argv[i])
             i += 1
+
+    if positionals:
+        args["db_name"] = positionals[0]
+    if len(positionals) > 1:
+        args["name"] = positionals[1]
 
     args["impl_flags"] = impl_flags
     args["env_file"] = env_file
     return args
 
 
-def _build_db(impl_name: str, env_file: str | None) -> DatabaseInterface:
+def _build_db(impl_name: str, db_name: str, env_file: str | None) -> DatabaseInterface:
     """Build a DatabaseInterface instance from flags."""
     overrides: dict[str, str] = {}
     if env_file:
@@ -60,7 +83,6 @@ def _build_db(impl_name: str, env_file: str | None) -> DatabaseInterface:
     impl_cls = resolve_implementation("db", impl_name)
 
     # Check if constructor needs secrets
-    import inspect
     from typing import get_type_hints
 
     try:
@@ -70,30 +92,34 @@ def _build_db(impl_name: str, env_file: str | None) -> DatabaseInterface:
         hints = {}
 
     if hints:
-        from de_platform.config.container import Container
-        from de_platform.services.secrets.interface import SecretsInterface
-
-        container = Container()
-        container.register_instance(SecretsInterface, secrets)
-        return container.resolve(impl_cls)  # type: ignore[return-value]
-    return impl_cls()  # type: ignore[return-value]
+        prefix = f"DB_{db_name.upper()}"
+        return impl_cls(secrets=secrets, prefix=prefix)
+    return impl_cls()
 
 
 def run_migrate(argv: list[str]) -> int:
     """Entry point for the migrate subcommand."""
     args = _parse_migrate_args(argv)
     command = args["command"]
+    db_name = args["db_name"]
+
+    if not db_name:
+        print(
+            "Usage: python -m de_platform migrate <up|down|status|create> <db_name> [options]",
+            file=sys.stderr,
+        )
+        return 1
 
     if command == "create":
-        return _create_migration(args["name"])
+        return _create_migration(db_name, args["name"])
 
     # All other commands need a database
     db_impl = args["impl_flags"].get("db", "memory")
-    db = _build_db(db_impl, args["env_file"])
+    db = _build_db(db_impl, db_name, args["env_file"])
     db.connect()
 
     try:
-        runner = MigrationRunner(db)
+        runner = MigrationRunner(db, db_name=db_name)
 
         if command == "up":
             applied = runner.up(target=args["target"])
@@ -135,35 +161,33 @@ def run_migrate(argv: list[str]) -> int:
         db.disconnect()
 
 
-def _create_migration(name: str | None) -> int:
-    """Create a new migration file from template."""
+def _create_migration(db_name: str, name: str | None) -> int:
+    """Create new .up.sql and .down.sql migration templates."""
     if not name:
-        print("Usage: python -m de_platform migrate create <name>", file=sys.stderr)
+        print(
+            "Usage: python -m de_platform migrate create <db_name> <migration_name>",
+            file=sys.stderr,
+        )
         return 1
 
+    migrations_dir = MIGRATIONS_DIR / db_name
+    migrations_dir.mkdir(parents=True, exist_ok=True)
+
     # Find next number
-    existing = sorted(VERSIONS_DIR.glob("[0-9][0-9][0-9]_*.py"))
+    existing = sorted(migrations_dir.glob("[0-9][0-9][0-9]_*.up.sql"))
     if existing:
         last_num = int(existing[-1].name[:3])
         next_num = last_num + 1
     else:
         next_num = 1
 
-    filename = f"{next_num:03d}_{name}.py"
-    filepath = VERSIONS_DIR / filename
+    base = f"{next_num:03d}_{name}"
+    up_path = migrations_dir / f"{base}.up.sql"
+    down_path = migrations_dir / f"{base}.down.sql"
 
-    filepath.write_text(f'''"""{name.replace("_", " ").title()}."""
+    up_path.write_text(f"-- {name.replace('_', ' ').title()} (up)\n")
+    down_path.write_text(f"-- {name.replace('_', ' ').title()} (down)\n")
 
-from de_platform.services.database.interface import DatabaseInterface
-
-
-def up(db: DatabaseInterface) -> None:
-    pass
-
-
-def down(db: DatabaseInterface) -> None:
-    pass
-''')
-
-    print(f"Created: {filepath}")
+    print(f"Created: {up_path}")
+    print(f"Created: {down_path}")
     return 0

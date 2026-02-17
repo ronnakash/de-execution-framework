@@ -10,6 +10,7 @@ from de_platform.config.context import ModuleConfig, PlatformConfig
 from de_platform.config.env_loader import load_env_file
 from de_platform.modules.base import Module
 from de_platform.services.logger.factory import LoggerFactory
+from de_platform.services.database.factory import DatabaseFactory, DbConfig
 from de_platform.services.registry import resolve_implementation, resolve_interface_type
 from de_platform.services.secrets.env_secrets import EnvSecrets
 from de_platform.services.secrets.interface import SecretsInterface
@@ -107,14 +108,18 @@ def _parse_env_overrides(raw: str) -> dict[str, str]:
     return data
 
 
-def _extract_global_flags(remaining: list[str]) -> tuple[dict[str, str], dict[str, str], list[str]]:
+def _extract_global_flags(
+    remaining: list[str],
+) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
     """Extract global flags from remaining args.
 
-    Returns (impl_flags, env_overrides, filtered_module_args).
-    impl_flags maps flag names (db, fs, cache, mq, metrics, log) to selected impl.
+    Returns (impl_flags, env_overrides, filtered_module_args, db_entries).
+    impl_flags maps flag names (fs, cache, mq, metrics, log) to selected impl.
+    db_entries is a list of raw --db values (e.g. ["memory", "warehouse=postgres"]).
     """
     impl_flags: dict[str, str] = {}
     env_overrides: dict[str, str] = {}
+    db_entries: list[str] = []
     env_file: str | None = None
     filtered_args: list[str] = []
 
@@ -130,6 +135,8 @@ def _extract_global_flags(remaining: list[str]) -> tuple[dict[str, str], dict[st
                 env_overrides.update(_parse_env_overrides(value))
             elif name == "env-file":
                 env_file = value
+            elif name == "db":
+                db_entries.append(value)
             else:
                 impl_flags[name] = value
             i += 2
@@ -149,7 +156,7 @@ def _extract_global_flags(remaining: list[str]) -> tuple[dict[str, str], dict[st
     if "log" in impl_flags and "LOG_IMPL" not in env_overrides:
         env_overrides["LOG_IMPL"] = impl_flags["log"]
 
-    return impl_flags, env_overrides, filtered_args
+    return impl_flags, env_overrides, filtered_args, db_entries
 
 
 def print_module_help(descriptor: dict[str, Any]) -> None:
@@ -191,10 +198,40 @@ def print_module_help(descriptor: dict[str, Any]) -> None:
     print()
 
 
+def _parse_db_entries(
+    db_entries: list[str], secrets: SecretsInterface
+) -> dict[str, DbConfig]:
+    """Parse --db entries into DbConfig instances.
+
+    Supports:
+      --db memory           -> name="default", impl=MemoryDatabase
+      --db warehouse=postgres -> name="warehouse", impl=PostgresDatabase, prefix=DB_WAREHOUSE
+    """
+    configs: dict[str, DbConfig] = {}
+    for entry in db_entries:
+        if "=" in entry:
+            name, impl_name = entry.split("=", 1)
+        else:
+            name = "default"
+            impl_name = entry
+        impl_cls = resolve_implementation("db", impl_name)
+        prefix = f"DB_{name.upper()}"
+        # Check if implementation needs secrets (e.g. PostgresDatabase)
+        hints = _get_init_hints(impl_cls)
+        needs_secrets = bool(hints)
+        configs[name] = DbConfig(
+            impl_cls=impl_cls,
+            secrets=secrets if needs_secrets else None,
+            prefix=prefix,
+        )
+    return configs
+
+
 def _build_container(
     impl_flags: dict[str, str],
     env_overrides: dict[str, str],
     module_args: dict[str, Any],
+    db_entries: list[str] | None = None,
 ) -> Container:
     """Build the DI container with all registered services."""
     container = Container()
@@ -215,7 +252,19 @@ def _build_container(
     logger_factory = LoggerFactory(default_impl=log_impl)
     container.register_factory(LoggerFactory, logger_factory)
 
-    # 4. Register each requested interface implementation
+    # 4. Register DatabaseFactory from --db entries
+    if db_entries:
+        db_configs = _parse_db_entries(db_entries, secrets)
+        factory = DatabaseFactory(db_configs)
+        container.register_instance(DatabaseFactory, factory)
+
+        # Backward compat: also register DatabaseInterface pointing to default
+        from de_platform.services.database.interface import DatabaseInterface
+
+        if "default" in db_configs:
+            container.register_instance(DatabaseInterface, factory.get("default"))
+
+    # 5. Register each requested interface implementation (non-db)
     for flag_name, impl_name in impl_flags.items():
         if flag_name == "log":
             continue  # handled above via LoggerFactory
@@ -274,13 +323,13 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
         return (0, None)  # type: ignore[return-value]
 
     # Extract global flags and module args
-    impl_flags, env_overrides, filtered_args = _extract_global_flags(remaining)
+    impl_flags, env_overrides, filtered_args, db_entries = _extract_global_flags(remaining)
 
     # Parse module-specific args
     module_args = parse_module_args(descriptor, filtered_args)
 
     # Build DI container
-    container = _build_container(impl_flags, env_overrides, module_args)
+    container = _build_container(impl_flags, env_overrides, module_args, db_entries)
 
     # Import module and find module_class
     mod = importlib.import_module(f"de_platform.modules.{module_name}.main")

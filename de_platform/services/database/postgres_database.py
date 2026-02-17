@@ -17,8 +17,9 @@ class PostgresDatabase(DatabaseInterface):
     from an AsyncModule, prefer calling the _async variants directly.
     """
 
-    def __init__(self, secrets: SecretsInterface) -> None:
+    def __init__(self, secrets: SecretsInterface, prefix: str = "DB_POSTGRES") -> None:
         self._secrets = secrets
+        self._prefix = prefix
         self._pool: asyncpg.Pool | None = None
         self._tx_conn: contextvars.ContextVar[asyncpg.Connection | None] = contextvars.ContextVar(
             "pg_tx_conn", default=None
@@ -27,10 +28,10 @@ class PostgresDatabase(DatabaseInterface):
     # -- Connection management ------------------------------------------------
 
     async def connect_async(self) -> None:
-        url = self._secrets.require("DB_POSTGRES_URL")
-        min_size = int(self._secrets.get_or_default("DB_POSTGRES_POOL_MIN", "2"))
-        max_size = int(self._secrets.get_or_default("DB_POSTGRES_POOL_MAX", "10"))
-        timeout = int(self._secrets.get_or_default("DB_POSTGRES_STATEMENT_TIMEOUT", "30000"))
+        url = self._secrets.require(f"{self._prefix}_URL")
+        min_size = int(self._secrets.get_or_default(f"{self._prefix}_POOL_MIN", "2"))
+        max_size = int(self._secrets.get_or_default(f"{self._prefix}_POOL_MAX", "10"))
+        timeout = int(self._secrets.get_or_default(f"{self._prefix}_STATEMENT_TIMEOUT", "30000"))
         self._pool = await asyncpg.create_pool(
             url,
             min_size=min_size,
