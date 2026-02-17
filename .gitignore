@@ -26,6 +26,8 @@ __pycache__/
 CLAUDE.md
 todo.md
 plan.md
+pipeline_design.md
+pipeline_plan.md
 
 # Design docs
 data_platform_design_doc.md
