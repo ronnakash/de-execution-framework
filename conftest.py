@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 
@@ -17,7 +15,7 @@ def postgres_container():
 
 
 @pytest.fixture
-def warehouse_db(postgres_container):
+async def warehouse_db(postgres_container):
     """Connected + migrated Postgres for 'warehouse' DB."""
     from de_platform.migrations.runner import MigrationRunner
     from de_platform.services.database.postgres_database import PostgresDatabase
@@ -30,8 +28,7 @@ def warehouse_db(postgres_container):
     secrets = EnvSecrets(overrides={"DB_WAREHOUSE_URL": asyncpg_url})
     db = PostgresDatabase(secrets=secrets, prefix="DB_WAREHOUSE")
 
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    loop.run_until_complete(db.connect_async())
+    await db.connect_async()
 
     # Run migrations
     runner = MigrationRunner(db, db_name="warehouse")
@@ -41,5 +38,4 @@ def warehouse_db(postgres_container):
 
     # Teardown: rollback all migrations then disconnect
     runner.down(count=999)
-    loop.run_until_complete(db.disconnect_async())
-    loop.close()
+    await db.disconnect_async()

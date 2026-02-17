@@ -18,9 +18,11 @@ REGISTRY: dict[str, dict[str, str]] = {
     },
     "cache": {
         "memory": "de_platform.services.cache.memory_cache.MemoryCache",
+        "redis": "de_platform.services.cache.redis_cache.RedisCache",
     },
     "mq": {
         "memory": "de_platform.services.message_queue.memory_queue.MemoryQueue",
+        "kafka": "de_platform.services.message_queue.kafka_queue.KafkaQueue",
     },
     "metrics": {
         "noop": "de_platform.services.metrics.noop_metrics.NoopMetrics",

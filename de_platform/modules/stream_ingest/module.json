@@ -1,0 +1,35 @@
+{
+  "name": "stream_ingest",
+  "display_name": "Stream Ingest Service",
+  "description": "Consumes events from a message queue, writes batched output to data lake, records metadata in database.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "topic",
+      "description": "Message queue topic to consume from.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "output-prefix",
+      "description": "Filesystem prefix for output files.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "batch-size",
+      "description": "Number of events per output batch.",
+      "required": false,
+      "type": "integer",
+      "default": 1000
+    },
+    {
+      "name": "flush-interval",
+      "description": "Max seconds between flushes.",
+      "required": false,
+      "type": "integer",
+      "default": 60
+    }
+  ]
+}

@@ -11,6 +11,8 @@ from de_platform.config.env_loader import load_env_file
 from de_platform.modules.base import Module
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.database.factory import DatabaseFactory, DbConfig
+from de_platform.services.health.health_server import HealthCheckServer
+from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.registry import resolve_implementation, resolve_interface_type
 from de_platform.services.secrets.env_secrets import EnvSecrets
 from de_platform.services.secrets.interface import SecretsInterface
@@ -27,6 +29,9 @@ _GLOBAL_FLAGS: dict[str, str | None] = {
     "metrics": None,
     "log": "pretty",
 }
+
+# Module types that should get health check server and lifecycle signal handling
+_SERVICE_TYPES = {"service", "worker"}
 
 
 def load_module_descriptor(module_name: str) -> dict[str, Any]:
@@ -110,10 +115,10 @@ def _parse_env_overrides(raw: str) -> dict[str, str]:
 
 def _extract_global_flags(
     remaining: list[str],
-) -> tuple[dict[str, str], dict[str, str], list[str], list[str]]:
+) -> tuple[dict[str, str], dict[str, str], list[str], list[str], int]:
     """Extract global flags from remaining args.
 
-    Returns (impl_flags, env_overrides, filtered_module_args, db_entries).
+    Returns (impl_flags, env_overrides, filtered_module_args, db_entries, health_port).
     impl_flags maps flag names (fs, cache, mq, metrics, log) to selected impl.
     db_entries is a list of raw --db values (e.g. ["memory", "warehouse=postgres"]).
     """
@@ -121,9 +126,10 @@ def _extract_global_flags(
     env_overrides: dict[str, str] = {}
     db_entries: list[str] = []
     env_file: str | None = None
+    health_port: int = 8080
     filtered_args: list[str] = []
 
-    all_flag_names = set(_GLOBAL_FLAGS.keys()) | {"env", "env-file"}
+    all_flag_names = set(_GLOBAL_FLAGS.keys()) | {"env", "env-file", "health-port"}
 
     i = 0
     while i < len(remaining):
@@ -137,6 +143,8 @@ def _extract_global_flags(
                 env_file = value
             elif name == "db":
                 db_entries.append(value)
+            elif name == "health-port":
+                health_port = int(value)
             else:
                 impl_flags[name] = value
             i += 2
@@ -156,7 +164,7 @@ def _extract_global_flags(
     if "log" in impl_flags and "LOG_IMPL" not in env_overrides:
         env_overrides["LOG_IMPL"] = impl_flags["log"]
 
-    return impl_flags, env_overrides, filtered_args, db_entries
+    return impl_flags, env_overrides, filtered_args, db_entries, health_port
 
 
 def print_module_help(descriptor: dict[str, Any]) -> None:
@@ -187,12 +195,13 @@ def print_module_help(descriptor: dict[str, Any]) -> None:
         print()
 
     print("  Global flags:")
-    print(f"    --{'db':20s} Database: memory [default: none]")
-    print(f"    --{'fs':20s} File system: memory [default: none]")
-    print(f"    --{'cache':20s} Cache: memory [default: none]")
-    print(f"    --{'mq':20s} Message queue: memory [default: none]")
+    print(f"    --{'db':20s} Database: memory, postgres [default: none]")
+    print(f"    --{'fs':20s} File system: memory, local [default: none]")
+    print(f"    --{'cache':20s} Cache: memory, redis [default: none]")
+    print(f"    --{'mq':20s} Message queue: memory, kafka [default: none]")
     print(f"    --{'metrics':20s} Metrics: noop, memory [default: none]")
     print(f"    --{'log':20s} Logging format: pretty, memory [default: pretty]")
+    print(f"    --{'health-port':20s} Health check HTTP port (service/worker only) [default: 8080]")
     print(f"    --{'env':20s} JSON string of env var overrides")
     print(f"    --{'env-file':20s} Environment file name (loads .env/<name>.env)")
     print()
@@ -232,6 +241,8 @@ def _build_container(
     env_overrides: dict[str, str],
     module_args: dict[str, Any],
     db_entries: list[str] | None = None,
+    health_port: int = 8080,
+    module_type: str = "job",
 ) -> Container:
     """Build the DI container with all registered services."""
     container = Container()
@@ -252,7 +263,17 @@ def _build_container(
     logger_factory = LoggerFactory(default_impl=log_impl)
     container.register_factory(LoggerFactory, logger_factory)
 
-    # 4. Register DatabaseFactory from --db entries
+    # 4. Lifecycle manager (always registered so any module can use it)
+    lifecycle = LifecycleManager()
+    container.register_instance(LifecycleManager, lifecycle)
+
+    # 5. Health check server (for service/worker modules)
+    if module_type in _SERVICE_TYPES:
+        health_server = HealthCheckServer(port=health_port)
+        lifecycle.set_health_server(health_server)
+        container.register_instance(HealthCheckServer, health_server)
+
+    # 6. Register DatabaseFactory from --db entries
     if db_entries:
         db_configs = _parse_db_entries(db_entries, secrets)
         factory = DatabaseFactory(db_configs)
@@ -262,9 +283,15 @@ def _build_container(
         from de_platform.services.database.interface import DatabaseInterface
 
         if "default" in db_configs:
-            container.register_instance(DatabaseInterface, factory.get("default"))
+            db_instance = factory.get("default")
+            container.register_instance(DatabaseInterface, db_instance)
+            # Register health check if this is a service/worker
+            if module_type in _SERVICE_TYPES and container.has(HealthCheckServer):
+                hs = container._registry[HealthCheckServer]
+                if hasattr(db_instance, "health_check"):
+                    hs.register_check("db", db_instance.health_check)
 
-    # 5. Register each requested interface implementation (non-db)
+    # 7. Register each requested interface implementation (non-db)
     for flag_name, impl_name in impl_flags.items():
         if flag_name == "log":
             continue  # handled above via LoggerFactory
@@ -289,6 +316,12 @@ def _build_container(
 
         container.register_instance(interface_type, instance)
 
+        # Register health checks for service/worker modules
+        if module_type in _SERVICE_TYPES and container.has(HealthCheckServer):
+            hs = container._registry[HealthCheckServer]
+            if hasattr(instance, "health_check"):
+                hs.register_check(flag_name, instance.health_check)
+
     return container
 
 
@@ -302,6 +335,30 @@ def _get_init_hints(cls: type) -> dict[str, Any]:
         return hints
     except Exception:
         return {}
+
+
+async def _run_service_module(module_instance: Any, container: Container) -> int:
+    """Run a service/worker module with health check server and lifecycle management."""
+    import asyncio
+
+    lifecycle: LifecycleManager = container._registry[LifecycleManager]
+    health_server: HealthCheckServer = container._registry[HealthCheckServer]
+
+    # Start health server
+    await health_server.start()
+
+    # Install signal handlers on the running loop
+    loop = asyncio.get_event_loop()
+    lifecycle.install_signal_handlers(loop=loop)
+
+    try:
+        # Mark startup complete after initialize
+        health_server.mark_started()
+        exit_code = await module_instance.run()
+    finally:
+        await lifecycle.shutdown()
+
+    return exit_code
 
 
 def run_module(argv: list[str]) -> tuple[int, Module]:
@@ -322,14 +379,21 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
         print_module_help(descriptor)
         return (0, None)  # type: ignore[return-value]
 
+    module_type = descriptor.get("type", "job")
+
     # Extract global flags and module args
-    impl_flags, env_overrides, filtered_args, db_entries = _extract_global_flags(remaining)
+    impl_flags, env_overrides, filtered_args, db_entries, health_port = (
+        _extract_global_flags(remaining)
+    )
 
     # Parse module-specific args
     module_args = parse_module_args(descriptor, filtered_args)
 
     # Build DI container
-    container = _build_container(impl_flags, env_overrides, module_args, db_entries)
+    container = _build_container(
+        impl_flags, env_overrides, module_args, db_entries,
+        health_port=health_port, module_type=module_type,
+    )
 
     # Import module and find module_class
     mod = importlib.import_module(f"de_platform.modules.{module_name}.main")
@@ -339,13 +403,21 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
         )
 
     module_instance = container.resolve(mod.module_class)
-    result = module_instance.run()
-    if inspect.iscoroutine(result):
+
+    # Service/worker modules get the full lifecycle treatment
+    if module_type in _SERVICE_TYPES:
         import asyncio
 
-        exit_code = asyncio.run(result)
+        exit_code = asyncio.run(_run_service_module(module_instance, container))
     else:
-        exit_code = result
+        result = module_instance.run()
+        if inspect.iscoroutine(result):
+            import asyncio
+
+            exit_code = asyncio.run(result)
+        else:
+            exit_code = result
+
     return (exit_code, module_instance)
 
 

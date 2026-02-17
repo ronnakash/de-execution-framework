@@ -3,13 +3,18 @@ name = "data-platform"
 version = "0.1.0"
 description = "Data Platform Execution Framework"
 requires-python = ">=3.10"
-dependencies = ["asyncpg>=0.29.0"]
+dependencies = [
+    "asyncpg>=0.29.0",
+    "redis>=5.0",
+    "confluent-kafka>=2.3",
+    "aiohttp>=3.9",
+]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "testcontainers[postgres]>=4.0",
+    "testcontainers[postgres,redis,kafka]>=4.0",
     "ruff>=0.8",
     "mypy>=1.13",
 ]

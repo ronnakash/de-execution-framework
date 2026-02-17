@@ -1,0 +1,16 @@
+{
+  "name": "api_gateway",
+  "display_name": "API Gateway Service",
+  "description": "REST API serving data from database and cache with cache-aside pattern, correlation ID propagation, and request logging.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "port",
+      "description": "HTTP server port.",
+      "required": false,
+      "type": "integer",
+      "default": 8000
+    }
+  ]
+}

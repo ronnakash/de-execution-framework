@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 
 pytest.importorskip("asyncpg")
@@ -9,22 +7,23 @@ from de_platform.services.secrets.env_secrets import EnvSecrets  # noqa: E402
 
 
 @pytest.fixture
-def db(postgres_container):
-    """Connected PostgresDatabase backed by testcontainer."""
+async def db(postgres_container):
+    """Connected PostgresDatabase backed by testcontainer.
+
+    Uses an async fixture so it runs on the same event loop as pytest-asyncio tests.
+    """
     url = postgres_container.get_connection_url()
     asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
     secrets = EnvSecrets(overrides={"DB_TEST_URL": asyncpg_url})
     database = PostgresDatabase(secrets=secrets, prefix="DB_TEST")
 
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    loop.run_until_complete(database.connect_async())
-    loop.run_until_complete(database.execute_async("DROP TABLE IF EXISTS _test_pg"))
+    await database.connect_async()
+    await database.execute_async("DROP TABLE IF EXISTS _test_pg")
 
     yield database
 
-    loop.run_until_complete(database.execute_async("DROP TABLE IF EXISTS _test_pg"))
-    loop.run_until_complete(database.disconnect_async())
-    loop.close()
+    await database.execute_async("DROP TABLE IF EXISTS _test_pg")
+    await database.disconnect_async()
 
 
 async def test_connect_disconnect(postgres_container):

@@ -55,7 +55,7 @@ def _run_batch_etl(
     import inspect
 
     descriptor = load_module_descriptor("batch_etl")
-    impl_flags, env_overrides, filtered_args, db_entries = _extract_global_flags(args[2:])
+    impl_flags, env_overrides, filtered_args, db_entries, _hp = _extract_global_flags(args[2:])
     module_args = parse_module_args(descriptor, filtered_args)
     container = _build_container(impl_flags, env_overrides, module_args, db_entries)
 
