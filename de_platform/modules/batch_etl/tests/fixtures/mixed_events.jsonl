@@ -1,0 +1,10 @@
+{"event_type": "page_view", "payload": {"url": "/home"}, "source": "web"}
+{"event_type": "", "payload": {"url": "/home"}, "source": "web"}
+{"payload": {"url": "/home"}, "source": "web"}
+{"event_type": "click", "payload": "not_a_dict", "source": "web"}
+{"event_type": "purchase", "payload": {"item_id": "p100", "amount": 29.99}, "source": "mobile"}
+{"event_type": "page_view", "payload": {"url": "/products"}, "source": "web"}
+{"event_type": "click", "payload": {"element": "btn"}, "source": "api"}
+{"event_type": "signup", "payload": {"method": "oauth"}, "source": "web"}
+{"event_type": "view", "payload": {"page": "/about"}, "source": "mobile"}
+{"event_type": "click", "payload": {"element": "link"}, "source": "web"}

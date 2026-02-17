@@ -1,0 +1,42 @@
+{
+  "name": "batch_etl",
+  "display_name": "Batch ETL Job",
+  "description": "Reads raw data from the data lake, applies transformations (deduplication, validation, type casting), and writes cleaned data to the warehouse database.",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "date",
+      "description": "Processing date in YYYY-MM-DD format. Determines which raw data partition to read.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "source-path",
+      "description": "Path prefix in the file system where raw data files are stored.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "target-table",
+      "description": "Database table to write cleaned data into.",
+      "required": false,
+      "type": "string",
+      "default": "cleaned_events"
+    },
+    {
+      "name": "batch-size",
+      "description": "Number of records to insert per database batch.",
+      "required": false,
+      "type": "integer",
+      "default": 500
+    },
+    {
+      "name": "dry-run",
+      "description": "If true, validate and transform data but do not write to database.",
+      "required": false,
+      "type": "boolean",
+      "default": false
+    }
+  ]
+}

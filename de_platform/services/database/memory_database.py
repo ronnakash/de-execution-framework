@@ -23,8 +23,19 @@ class MemoryDatabase(DatabaseInterface):
 
     def execute(self, query: str, params: list[Any] | None = None) -> int:
         self._check_connected()
-        # For memory impl, execute is a no-op that records DDL.
-        # Actual data manipulation goes through bulk_insert/fetch_*.
+        # Support DELETE FROM <table> WHERE <col> = $1
+        delete_match = re.match(
+            r"(?i)DELETE\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*=\s*\$1", query.strip()
+        )
+        if delete_match and params:
+            table = delete_match.group(1)
+            col = delete_match.group(2)
+            val = params[0]
+            rows = self._tables.get(table, [])
+            before = len(rows)
+            self._tables[table] = [r for r in rows if r.get(col) != val]
+            return before - len(self._tables[table])
+        # For DDL and other statements, no-op
         return 0
 
     def fetch_one(self, query: str, params: list[Any] | None = None) -> dict[str, Any] | None:

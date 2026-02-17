@@ -10,9 +10,11 @@ from typing import Any
 REGISTRY: dict[str, dict[str, str]] = {
     "db": {
         "memory": "de_platform.services.database.memory_database.MemoryDatabase",
+        "postgres": "de_platform.services.database.postgres_database.PostgresDatabase",
     },
     "fs": {
         "memory": "de_platform.services.filesystem.memory_filesystem.MemoryFileSystem",
+        "local": "de_platform.services.filesystem.local_filesystem.LocalFileSystem",
     },
     "cache": {
         "memory": "de_platform.services.cache.memory_cache.MemoryCache",

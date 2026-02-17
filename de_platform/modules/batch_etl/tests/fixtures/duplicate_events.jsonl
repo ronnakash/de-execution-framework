@@ -1,0 +1,5 @@
+{"event_type": "page_view", "payload": {"url": "/home", "user_id": "u1"}, "source": "web"}
+{"event_type": "click", "payload": {"element": "btn", "user_id": "u2"}, "source": "web"}
+{"event_type": "page_view", "payload": {"url": "/home", "user_id": "u1"}, "source": "web"}
+{"event_type": "purchase", "payload": {"item_id": "p100", "user_id": "u3"}, "source": "mobile"}
+{"event_type": "click", "payload": {"element": "btn", "user_id": "u2"}, "source": "web"}

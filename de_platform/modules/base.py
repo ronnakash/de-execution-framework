@@ -26,3 +26,33 @@ class Module(ABC):
             return self.execute()
         finally:
             self.teardown()
+
+
+class AsyncModule(ABC):
+    """Base class for async modules (e.g. those using asyncpg).
+
+    The CLI runner detects the coroutine returned by run() and uses asyncio.run().
+    """
+
+    async def initialize(self) -> None:
+        """Async setup. Override as needed."""
+
+    async def validate(self) -> None:
+        """Async precondition checks. Override as needed."""
+
+    @abstractmethod
+    async def execute(self) -> int:
+        """Async module logic. Must return an exit code."""
+        ...
+
+    async def teardown(self) -> None:
+        """Async cleanup. Override as needed."""
+
+    async def run(self) -> int:
+        """Execute the full async module lifecycle."""
+        try:
+            await self.initialize()
+            await self.validate()
+            return await self.execute()
+        finally:
+            await self.teardown()

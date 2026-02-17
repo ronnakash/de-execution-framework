@@ -3,7 +3,7 @@ name = "data-platform"
 version = "0.1.0"
 description = "Data Platform Execution Framework"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["asyncpg>=0.29.0"]
 
 [project.optional-dependencies]
 dev = [
