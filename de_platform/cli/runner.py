@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -6,10 +7,25 @@ from typing import Any
 
 from de_platform.config.container import Container
 from de_platform.config.context import ModuleConfig, PlatformConfig
+from de_platform.config.env_loader import load_env_file
 from de_platform.modules.base import Module
 from de_platform.services.logger.factory import LoggerFactory
+from de_platform.services.registry import resolve_implementation, resolve_interface_type
+from de_platform.services.secrets.env_secrets import EnvSecrets
+from de_platform.services.secrets.interface import SecretsInterface
 
 MODULES_DIR = Path(__file__).resolve().parent.parent / "modules"
+
+# Global flags that select interface implementations.
+# Maps flag name -> default value (None = not registered unless explicitly requested).
+_GLOBAL_FLAGS: dict[str, str | None] = {
+    "db": None,
+    "fs": None,
+    "cache": None,
+    "mq": None,
+    "metrics": None,
+    "log": "pretty",
+}
 
 
 def load_module_descriptor(module_name: str) -> dict[str, Any]:
@@ -91,6 +107,51 @@ def _parse_env_overrides(raw: str) -> dict[str, str]:
     return data
 
 
+def _extract_global_flags(remaining: list[str]) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """Extract global flags from remaining args.
+
+    Returns (impl_flags, env_overrides, filtered_module_args).
+    impl_flags maps flag names (db, fs, cache, mq, metrics, log) to selected impl.
+    """
+    impl_flags: dict[str, str] = {}
+    env_overrides: dict[str, str] = {}
+    env_file: str | None = None
+    filtered_args: list[str] = []
+
+    all_flag_names = set(_GLOBAL_FLAGS.keys()) | {"env", "env-file"}
+
+    i = 0
+    while i < len(remaining):
+        flag = remaining[i]
+        if flag.startswith("--") and flag[2:] in all_flag_names and i + 1 < len(remaining):
+            name = flag[2:]
+            value = remaining[i + 1]
+            if name == "env":
+                env_overrides.update(_parse_env_overrides(value))
+            elif name == "env-file":
+                env_file = value
+            else:
+                impl_flags[name] = value
+            i += 2
+        else:
+            filtered_args.append(remaining[i])
+            i += 1
+
+    # Load .env file if specified
+    if env_file:
+        file_vars = load_env_file(env_file)
+        # File vars are lower priority — env_overrides (from --env) win
+        merged = dict(file_vars)
+        merged.update(env_overrides)
+        env_overrides = merged
+
+    # --log convenience: put it into env overrides so factory can read it
+    if "log" in impl_flags and "LOG_IMPL" not in env_overrides:
+        env_overrides["LOG_IMPL"] = impl_flags["log"]
+
+    return impl_flags, env_overrides, filtered_args
+
+
 def print_module_help(descriptor: dict[str, Any]) -> None:
     version = descriptor.get("version", "")
     version_suffix = f" v{version}" if version else ""
@@ -108,18 +169,94 @@ def print_module_help(descriptor: dict[str, Any]) -> None:
             required = " (required)" if arg.get("required") else ""
             default = f" [default: {arg['default']}]" if "default" in arg else ""
             choices_list = arg.get("choices")
-            choices = f" (choices: {', '.join(str(c) for c in choices_list)})" if choices_list else ""
-            print(f"    --{arg['name']:20s} {arg['description']}{required}{default}{choices}")
+            choices = (
+                f" (choices: {', '.join(str(c) for c in choices_list)})"
+                if choices_list
+                else ""
+            )
+            print(
+                f"    --{arg['name']:20s} {arg['description']}{required}{default}{choices}"
+            )
         print()
 
     print("  Global flags:")
+    print(f"    --{'db':20s} Database: memory [default: none]")
+    print(f"    --{'fs':20s} File system: memory [default: none]")
+    print(f"    --{'cache':20s} Cache: memory [default: none]")
+    print(f"    --{'mq':20s} Message queue: memory [default: none]")
+    print(f"    --{'metrics':20s} Metrics: noop, memory [default: none]")
     print(f"    --{'log':20s} Logging format: pretty, memory [default: pretty]")
     print(f"    --{'env':20s} JSON string of env var overrides")
+    print(f"    --{'env-file':20s} Environment file name (loads .env/<name>.env)")
     print()
 
 
+def _build_container(
+    impl_flags: dict[str, str],
+    env_overrides: dict[str, str],
+    module_args: dict[str, Any],
+) -> Container:
+    """Build the DI container with all registered services."""
+    container = Container()
+
+    # 1. Bootstrap secrets (always available)
+    secrets = EnvSecrets(overrides=env_overrides)
+    container.register_instance(SecretsInterface, secrets)
+
+    # 2. Platform-level config
+    env = PlatformConfig(overrides=env_overrides)
+    container.register_instance(PlatformConfig, env)
+
+    config = ModuleConfig(module_args)
+    container.register_instance(ModuleConfig, config)
+
+    # 3. Logger factory — --log flag takes precedence, then LOG_IMPL env override
+    log_impl = impl_flags.get("log") or env_overrides.get("LOG_IMPL", "pretty")
+    logger_factory = LoggerFactory(default_impl=log_impl)
+    container.register_factory(LoggerFactory, logger_factory)
+
+    # 4. Register each requested interface implementation
+    for flag_name, impl_name in impl_flags.items():
+        if flag_name == "log":
+            continue  # handled above via LoggerFactory
+        impl_cls = resolve_implementation(flag_name, impl_name)
+        interface_type = resolve_interface_type(flag_name)
+
+        # If the implementation's __init__ needs SecretsInterface, resolve via container
+        hints = {}
+        try:
+            hints = {
+                k: v
+                for k, v in _get_init_hints(impl_cls).items()
+                if k != "return"
+            }
+        except Exception:
+            pass
+
+        if hints:
+            instance = container.resolve(impl_cls)
+        else:
+            instance = impl_cls()
+
+        container.register_instance(interface_type, instance)
+
+    return container
+
+
+def _get_init_hints(cls: type) -> dict[str, Any]:
+    """Get type hints for cls.__init__, returning empty dict on failure."""
+    try:
+        from typing import get_type_hints
+
+        hints = get_type_hints(cls.__init__)
+        hints.pop("return", None)
+        return hints
+    except Exception:
+        return {}
+
+
 def run_module(argv: list[str]) -> tuple[int, Module]:
-    """Testable entry point: parses args, builds context, runs module, returns (exit_code, module)."""
+    """Testable entry point: parses args, builds container, runs module, returns (exit_code, module)."""
     if not argv or argv[0] != "run":
         raise ValueError("Usage: python -m de_platform run <module_name> [flags] [module args]")
 
@@ -136,38 +273,14 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
         print_module_help(descriptor)
         return (0, None)  # type: ignore[return-value]
 
-    # Extract global flags
-    log_impl = "pretty"
-    env_overrides: dict[str, str] = {}
-    filtered_args: list[str] = []
-    i = 0
-    while i < len(remaining):
-        if remaining[i] == "--log" and i + 1 < len(remaining):
-            log_impl = remaining[i + 1]
-            i += 2
-        elif remaining[i] == "--env" and i + 1 < len(remaining):
-            env_overrides.update(_parse_env_overrides(remaining[i + 1]))
-            i += 2
-        else:
-            filtered_args.append(remaining[i])
-            i += 1
+    # Extract global flags and module args
+    impl_flags, env_overrides, filtered_args = _extract_global_flags(remaining)
 
-    # --log convenience: put it into env overrides so factory can read it
-    if "LOG_IMPL" not in env_overrides:
-        env_overrides["LOG_IMPL"] = log_impl
-
-    # Parse module args
+    # Parse module-specific args
     module_args = parse_module_args(descriptor, filtered_args)
 
-    # Build container with factories
-    env = PlatformConfig(overrides=env_overrides)
-    logger_factory = LoggerFactory(default_impl=env.get("LOG_IMPL", "pretty"))
-    config = ModuleConfig(module_args)
-
-    container = Container()
-    container.register_instance(ModuleConfig, config)
-    container.register_instance(PlatformConfig, env)
-    container.register_factory(LoggerFactory, logger_factory)
+    # Build DI container
+    container = _build_container(impl_flags, env_overrides, module_args)
 
     # Import module and find module_class
     mod = importlib.import_module(f"de_platform.modules.{module_name}.main")
@@ -177,7 +290,13 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
         )
 
     module_instance = container.resolve(mod.module_class)
-    exit_code = module_instance.run()
+    result = module_instance.run()
+    if inspect.iscoroutine(result):
+        import asyncio
+
+        exit_code = asyncio.run(result)
+    else:
+        exit_code = result
     return (exit_code, module_instance)
 
 
