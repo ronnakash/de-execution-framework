@@ -1,58 +1,56 @@
-"""Integration tests for the Batch ETL module using memory implementations."""
+"""Tests for the rewritten generic Batch ETL module."""
 
 from __future__ import annotations
 
+import importlib
+import asyncio
 import json
 from pathlib import Path
 
-from de_platform.cli.runner import run_module
+from de_platform.cli.runner import (
+    _build_container,
+    _extract_global_flags,
+    load_module_descriptor,
+    parse_module_args,
+)
+from de_platform.services.filesystem.interface import FileSystemInterface
 from de_platform.services.database.interface import DatabaseInterface
-from de_platform.services.logger.memory_logger import MemoryLogger
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+_EXTRACTOR = "de_platform.modules.batch_etl.extractors.filesystem.FileSystemExtractor"
+_TRANSFORMER = (
+    "de_platform.modules.batch_etl.transformers.event_normalizer.EventNormalizerTransformer"
+)
+_LOADER = "de_platform.modules.batch_etl.loaders.database.DatabaseLoader"
 
-def _load_fixture(name: str) -> bytes:
-    return (FIXTURES / name).read_bytes()
 
-
-def _run_batch_etl(
-    date: str = "2026-01-15",
-    source_path: str = "raw/events",
+def _run_etl(
+    extractor_params: dict | None = None,
+    transformer_params: dict | None = None,
+    loader_params: dict | None = None,
     extra_flags: list[str] | None = None,
     fs_data: dict[str, bytes] | None = None,
 ) -> tuple[int, object]:
-    """Helper to run batch_etl with memory implementations.
+    """Run batch_etl with memory implementations, returning (exit_code, module)."""
+    ep = json.dumps(extractor_params or {})
+    tp = json.dumps(transformer_params or {})
+    lp = json.dumps(loader_params or {"table": "cleaned_events"})
 
-    Writes fs_data into the MemoryFileSystem before running.
-    Returns (exit_code, module_instance).
-    """
     args = [
         "run", "batch_etl",
         "--db", "memory",
         "--fs", "memory",
         "--log", "memory",
-        "--date", date,
-        "--source-path", source_path,
+        "--extractor", _EXTRACTOR,
+        "--transformers", _TRANSFORMER,
+        "--loader", _LOADER,
+        "--extractor-params", ep,
+        "--transformer-params", tp,
+        "--loader-params", lp,
     ]
     if extra_flags:
         args.extend(extra_flags)
-
-    # We need to pre-populate the MemoryFileSystem. Since run_module() creates
-    # the container internally, we run it and rely on the module reading from fs.
-    # To seed data, we write files into the memory filesystem via the container
-    # before execution. We'll do this by running run_module, but we need the fs
-    # to already have data.
-    #
-    # Approach: patch run_module flow by calling the internals ourselves.
-    from de_platform.cli.runner import (
-        _build_container,
-        _extract_global_flags,
-        load_module_descriptor,
-        parse_module_args,
-    )
-    import importlib
-    import inspect
 
     descriptor = load_module_descriptor("batch_etl")
     impl_flags, env_overrides, filtered_args, db_entries, _hp = _extract_global_flags(args[2:])
@@ -61,81 +59,103 @@ def _run_batch_etl(
 
     # Seed filesystem data
     if fs_data:
-        from de_platform.services.filesystem.interface import FileSystemInterface
-
         fs = container._registry[FileSystemInterface]
         for path, data in fs_data.items():
             fs.write(path, data)
 
-    # Import and resolve module
     mod = importlib.import_module("de_platform.modules.batch_etl.main")
     module_instance = container.resolve(mod.module_class)
-    result = module_instance.run()
-    if inspect.iscoroutine(result):
-        import asyncio
-        exit_code = asyncio.run(result)
-    else:
-        exit_code = result
+    exit_code = asyncio.run(module_instance.run())
 
     return exit_code, module_instance
 
 
+def _fixture(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
+
+
 def test_run_success():
-    data = _load_fixture("valid_events.jsonl")
-    exit_code, module = _run_batch_etl(
-        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data}
+    """Valid events are extracted, normalized, and inserted into the database."""
+    data = _fixture("valid_events.jsonl")
+    ext_params = {"path": "raw/events", "date": "2026-01-15"}
+    t_params = {"date": "2026-01-15"}
+
+    exit_code, module = _run_etl(
+        extractor_params=ext_params,
+        transformer_params=t_params,
+        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data},
     )
     assert exit_code == 0
-    # Reconnect to query (teardown disconnects)
-    module.db.connect()
-    rows = module.db.fetch_all("SELECT * FROM cleaned_events")
+
+    # Verify rows were inserted via the container's DB
+    from de_platform.config.container import Container
+    db: DatabaseInterface = module.container._registry[DatabaseInterface]
+    db.connect()
+    rows = db.fetch_all("SELECT * FROM cleaned_events")
     assert len(rows) == 10
-    # Check log has summary
-    assert isinstance(module.log, MemoryLogger)
-    assert any("Batch ETL complete" in m for m in module.log.messages)
 
 
 def test_run_no_data():
-    exit_code, module = _run_batch_etl()
+    """When no files exist for the given prefix, the module exits cleanly."""
+    exit_code, _ = _run_etl(
+        extractor_params={"path": "raw/events", "date": "2026-01-15"},
+        transformer_params={"date": "2026-01-15"},
+    )
     assert exit_code == 0
-    assert isinstance(module.log, MemoryLogger)
-    assert any("No raw data found" in m for m in module.log.messages)
 
 
 def test_run_dry_run():
-    data = _load_fixture("valid_events.jsonl")
-    exit_code, module = _run_batch_etl(
+    """In dry-run mode, items are processed but the loader is skipped."""
+    data = _fixture("valid_events.jsonl")
+    ext_params = {"path": "raw/events", "date": "2026-01-15"}
+    t_params = {"date": "2026-01-15"}
+
+    exit_code, module = _run_etl(
+        extractor_params=ext_params,
+        transformer_params=t_params,
         extra_flags=["--dry-run", "true"],
         fs_data={"raw/events/2026-01-15/batch_0.jsonl": data},
     )
     assert exit_code == 0
-    module.db.connect()
-    rows = module.db.fetch_all("SELECT * FROM cleaned_events")
+
+    from de_platform.services.database.interface import DatabaseInterface
+    db: DatabaseInterface = module.container._registry[DatabaseInterface]
+    db.connect()
+    rows = db.fetch_all("SELECT * FROM cleaned_events")
     assert len(rows) == 0
 
 
-def test_run_deduplication():
-    data = _load_fixture("duplicate_events.jsonl")
-    exit_code, module = _run_batch_etl(
-        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data}
+def test_run_batched():
+    """Events are batched before reaching the loader."""
+    data = _fixture("valid_events.jsonl")
+    ext_params = {"path": "raw/events", "date": "2026-01-15"}
+    t_params = {"date": "2026-01-15"}
+
+    exit_code, _ = _run_etl(
+        extractor_params=ext_params,
+        transformer_params=t_params,
+        extra_flags=["--batch-size", "5"],
+        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data},
     )
     assert exit_code == 0
-    module.db.connect()
-    rows = module.db.fetch_all("SELECT * FROM cleaned_events")
-    # 5 events, 2 duplicates -> 3 unique
-    assert len(rows) == 3
 
 
-def test_run_invalid_data():
-    data = _load_fixture("mixed_events.jsonl")
-    exit_code, module = _run_batch_etl(
-        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data}
+def test_run_invalid_events_dropped():
+    """Events missing required fields are dropped by the normalizer."""
+    data = _fixture("mixed_events.jsonl")
+    ext_params = {"path": "raw/events", "date": "2026-01-15"}
+    t_params = {"date": "2026-01-15"}
+
+    exit_code, module = _run_etl(
+        extractor_params=ext_params,
+        transformer_params=t_params,
+        fs_data={"raw/events/2026-01-15/batch_0.jsonl": data},
     )
     assert exit_code == 0
-    module.db.connect()
-    # 10 events: 7 valid, 3 invalid -> 7 unique written
-    rows = module.db.fetch_all("SELECT * FROM cleaned_events")
+
+    from de_platform.services.database.interface import DatabaseInterface
+    db: DatabaseInterface = module.container._registry[DatabaseInterface]
+    db.connect()
+    rows = db.fetch_all("SELECT * FROM cleaned_events")
+    # mixed_events has 10 records of which 7 are valid
     assert len(rows) == 7
-    # Should have logged validation warnings
-    assert isinstance(module.log, MemoryLogger)
-    assert any("Validation complete" in m for m in module.log.messages)

@@ -1,0 +1,50 @@
+{
+  "name": "run_migrations",
+  "display_name": "Database Migration Runner",
+  "description": "Applies or rolls back SQL database migrations for a named database. Use --db to select the target database implementation.",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "direction",
+      "description": "Direction to migrate: 'up' (apply pending) or 'down' (roll back).",
+      "required": false,
+      "type": "string",
+      "default": "up",
+      "choices": ["up", "down"]
+    },
+    {
+      "name": "db-name",
+      "description": "Name of the migration set to run (maps to de_platform/migrations/<db-name>/).",
+      "required": false,
+      "type": "string",
+      "default": "warehouse"
+    },
+    {
+      "name": "count",
+      "description": "Number of migrations to roll back (only used with direction=down).",
+      "required": false,
+      "type": "integer",
+      "default": 1
+    },
+    {
+      "name": "target",
+      "description": "Stop applying migrations at this migration number (only used with direction=up).",
+      "required": false,
+      "type": "integer"
+    },
+    {
+      "name": "allow-down",
+      "description": "Must be set to true to allow rolling back migrations (safety guard).",
+      "required": false,
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "name": "create",
+      "description": "Create a new migration template with this name instead of running migrations.",
+      "required": false,
+      "type": "string"
+    }
+  ]
+}

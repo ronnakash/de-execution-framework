@@ -1,137 +1,173 @@
-"""Batch ETL module: reads raw data, validates, transforms, deduplicates, writes to DB."""
+"""Generic Batch ETL module.
+
+Runs a configurable Extract → Transform* → Load pipeline using the DataStream
+streaming engine. All three stages are provided as dotted class paths and
+resolved through the DI container, so they can declare any registered
+infrastructure dependency (db, fs, cache, logger, etc.).
+
+Example (using the built-in FileSystem extractor and Database loader)::
+
+    python -m de_platform run batch_etl \\
+        --extractor de_platform.modules.batch_etl.extractors.filesystem.FileSystemExtractor \\
+        --transformers de_platform.modules.batch_etl.transformers.event_normalizer.EventNormalizerTransformer \\
+        --loader de_platform.modules.batch_etl.loaders.database.DatabaseLoader \\
+        --extractor-params '{"path":"raw_events","date":"2025-01-01"}' \\
+        --loader-params '{"table":"cleaned_events"}' \\
+        --batch-size 500 \\
+        --db warehouse=postgres \\
+        --fs local
+
+Processing method / worker overrides::
+
+    --extractor-method concurrent --extractor-workers 4
+    --transformer-method parallel --transformer-workers 4
+    --loader-method inline
+"""
 
 from __future__ import annotations
 
+import importlib
 import json
+from typing import Any
 
+from de_platform.config.container import Container
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import Module
-from de_platform.modules.batch_etl.transformer import compute_dedup_key, transform_events
-from de_platform.modules.batch_etl.validator import validate_events
-from de_platform.services.database.interface import DatabaseInterface
-from de_platform.services.filesystem.interface import FileSystemInterface
+from de_platform.modules.base import AsyncModule
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
+from de_platform.shared.data_stream import DataStream
+from de_platform.shared.etl.interfaces import Extractor, Loader, Transformer
 
 
-class BatchEtlModule(Module):
+def _import_class(dotted_path: str) -> type:
+    """Import and return a class from a dotted module.ClassName path."""
+    module_path, class_name = dotted_path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
+class BatchEtlModule(AsyncModule):
     log: LoggingInterface
 
     def __init__(
         self,
         config: ModuleConfig,
         logger: LoggerFactory,
-        db: DatabaseInterface,
-        fs: FileSystemInterface,
+        container: Container,
     ) -> None:
         self.config = config
         self.logger = logger
-        self.db = db
-        self.fs = fs
+        self.container = container
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.log = self.logger.create()
-        self.db.connect()
 
-    def execute(self) -> int:
-        date = self.config.get("date")
-        source_path = self.config.get("source-path")
-        target_table = self.config.get("target-table", "cleaned_events")
-        batch_size = self.config.get("batch-size", 500)
-        dry_run = self.config.get("dry-run", False)
+    async def teardown(self) -> None:
+        pass
+
+    async def execute(self) -> int:
+        # ----------------------------------------------------------------
+        # Parse configuration
+        # ----------------------------------------------------------------
+        extractor_path: str = self.config.get("extractor")
+        loader_path: str = self.config.get("loader")
+        transformers_str: str = self.config.get("transformers", "")
+        transformer_paths = [p.strip() for p in transformers_str.split(",") if p.strip()]
+
+        extractor_params: dict[str, Any] = json.loads(self.config.get("extractor-params", "{}"))
+        transformer_params: dict[str, Any] = json.loads(
+            self.config.get("transformer-params", "{}")
+        )
+        loader_params: dict[str, Any] = json.loads(self.config.get("loader-params", "{}"))
+
+        batch_size: int = self.config.get("batch-size", 0)
+        dry_run: bool = self.config.get("dry-run", False)
+
+        # ----------------------------------------------------------------
+        # Resolve ETL implementations via the DI container
+        # ----------------------------------------------------------------
+        extractor_cls = _import_class(extractor_path)
+        extractor: Extractor = self.container.resolve(extractor_cls)
+        # Inject params if the implementation exposes a params attribute
+        if hasattr(extractor, "params"):
+            extractor.params = extractor_params  # type: ignore[union-attr]
+
+        transformers: list[Transformer] = []
+        for path in transformer_paths:
+            t_cls = _import_class(path)
+            t: Transformer = self.container.resolve(t_cls)
+            if hasattr(t, "params"):
+                t.params = transformer_params  # type: ignore[union-attr]
+            transformers.append(t)
+
+        loader_cls = _import_class(loader_path)
+        loader: Loader = self.container.resolve(loader_cls)
+        if hasattr(loader, "params"):
+            loader.params = loader_params  # type: ignore[union-attr]
+
+        # ----------------------------------------------------------------
+        # Determine processing methods / workers (CLI overrides > impl defaults)
+        # ----------------------------------------------------------------
+        ext_method = self.config.get("extractor-method", None) or extractor.processing_method
+        ext_workers = int(self.config.get("extractor-workers", None) or extractor.workers)
+
+        loader_method = self.config.get("loader-method", None) or loader.processing_method
+        loader_workers = int(self.config.get("loader-workers", None) or loader.workers)
+
+        t_method_override = self.config.get("transformer-method", None)
+        t_workers_override = self.config.get("transformer-workers", None)
 
         self.log.info(
             "Starting Batch ETL",
-            date=date,
-            source_path=source_path,
-            target_table=target_table,
+            extractor=extractor_path,
+            transformers=transformer_paths,
+            loader=loader_path,
+            batch_size=batch_size,
             dry_run=dry_run,
         )
 
-        # Step 1: Read raw data
-        raw_events = self._read_raw_data(source_path, date)
-        if not raw_events:
-            self.log.warn("No raw data found", date=date, source_path=source_path)
+        # ----------------------------------------------------------------
+        # Build the DataStream pipeline
+        # ----------------------------------------------------------------
+        # The stream starts with the extractor params as a single item.
+        # The extractor's extract() method is called as a generator, yielding
+        # individual records from the source.
+        stream = DataStream(extractor_params).map(
+            extractor.extract,
+            processing_method=ext_method,
+            workers=ext_workers,
+        )
+
+        # Chain transformers. Each transformer.transform() is mapped over items.
+        for transformer in transformers:
+            t_method = t_method_override or transformer.processing_method
+            t_workers = int(t_workers_override or transformer.workers)
+            stream = stream.map(transformer.transform, processing_method=t_method, workers=t_workers)
+
+        # Drop None values (transformers return None to signal "drop this item")
+        stream = stream.filter(lambda item: item is not None)
+
+        # Optional batching before the loader
+        if batch_size > 0:
+            stream = stream.batch(batch_size)
+
+        # ----------------------------------------------------------------
+        # Execute
+        # ----------------------------------------------------------------
+        if dry_run:
+            self.log.info("Dry run: consuming stream without loading")
+            items = await stream.collect()
+            self.log.info("Dry run complete", items_processed=len(items))
             return 0
 
-        # Step 2: Validate
-        valid_events, invalid_count = validate_events(raw_events, self.log)
-
-        # Step 3: Transform
-        transformed = transform_events(valid_events, date)
-
-        # Step 4: Deduplicate
-        unique_events, dup_count = self._deduplicate(transformed)
-        self.log.info(
-            "Deduplication complete",
-            before=len(transformed),
-            after=len(unique_events),
-            duplicates=dup_count,
+        await stream.for_each(
+            loader.load,
+            processing_method=loader_method,
+            workers=loader_workers,
         )
 
-        # Step 5: Write to database
-        inserted = 0
-        if not dry_run and unique_events:
-            inserted = self._write_to_db(target_table, unique_events, batch_size)
-
-        # Step 6: Summary
-        self.log.info(
-            "Batch ETL complete",
-            raw=len(raw_events),
-            valid=len(valid_events),
-            unique=len(unique_events),
-            inserted=inserted,
-            invalid=invalid_count,
-            duplicates=dup_count,
-        )
-
+        self.log.info("Batch ETL complete")
         return 0
-
-    def teardown(self) -> None:
-        self.db.disconnect()
-
-    def _read_raw_data(self, source_path: str, date: str) -> list[dict]:
-        """Read JSONL files from {source_path}/{date}/ in the file system."""
-        prefix = f"{source_path}/{date}"
-        files = self.fs.list(prefix)
-        if not files:
-            return []
-
-        self.log.info("Reading raw data", files=len(files), prefix=prefix)
-        raw_events: list[dict] = []
-        for file_path in files:
-            data = self.fs.read(file_path)
-            for line in data.decode("utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    try:
-                        raw_events.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        self.log.error("Malformed JSON line", file=file_path, line=line[:100])
-
-        self.log.info("Raw data loaded", total_records=len(raw_events))
-        return raw_events
-
-    def _deduplicate(self, events: list[dict]) -> tuple[list[dict], int]:
-        """Deduplicate events by content hash. Returns (unique_events, duplicate_count)."""
-        seen: set[str] = set()
-        unique: list[dict] = []
-        for event in events:
-            key = compute_dedup_key(event)
-            if key not in seen:
-                seen.add(key)
-                unique.append(event)
-        return unique, len(events) - len(unique)
-
-    def _write_to_db(self, table: str, events: list[dict], batch_size: int) -> int:
-        """Write events to database in batches. Returns total rows inserted."""
-        total = 0
-        for i in range(0, len(events), batch_size):
-            batch = events[i : i + batch_size]
-            count = self.db.bulk_insert(table, batch)
-            total += count
-        self.log.info("Batch write complete", table=table, total_inserted=total)
-        return total
 
 
 module_class = BatchEtlModule

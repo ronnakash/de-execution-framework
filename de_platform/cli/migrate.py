@@ -23,7 +23,8 @@ from de_platform.services.secrets.env_secrets import EnvSecrets
 def _parse_migrate_args(argv: list[str]) -> dict[str, Any]:
     """Parse migrate subcommand arguments.
 
-    Format: <command> <db_name> [migration_name] [--db impl] [--count N] [--target N] [--env-file F]
+    Format: <command> <db_name> [migration_name] [--db impl] [--count N] [--target N]
+            [--env-file F] [--allow-down]
     """
     args: dict[str, Any] = {
         "command": None,
@@ -31,6 +32,7 @@ def _parse_migrate_args(argv: list[str]) -> dict[str, Any]:
         "target": None,
         "count": 1,
         "name": None,
+        "allow_down": False,
     }
     impl_flags: dict[str, str] = {}
     env_file: str | None = None
@@ -59,6 +61,9 @@ def _parse_migrate_args(argv: list[str]) -> dict[str, Any]:
         elif flag == "--env-file" and i + 1 < len(argv):
             env_file = argv[i + 1]
             i += 2
+        elif flag == "--allow-down":
+            args["allow_down"] = True
+            i += 1
         else:
             positionals.append(argv[i])
             i += 1
@@ -132,6 +137,13 @@ def run_migrate(argv: list[str]) -> int:
             return 0
 
         elif command == "down":
+            if not args["allow_down"]:
+                print(
+                    "Error: Down migrations are disabled by default.\n"
+                    "Pass --allow-down to enable rolling back migrations.",
+                    file=sys.stderr,
+                )
+                return 1
             rolled_back = runner.down(count=args["count"])
             if rolled_back:
                 for name in rolled_back:
