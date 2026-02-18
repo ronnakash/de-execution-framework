@@ -15,6 +15,7 @@ REGISTRY: dict[str, dict[str, str]] = {
     "fs": {
         "memory": "de_platform.services.filesystem.memory_filesystem.MemoryFileSystem",
         "local": "de_platform.services.filesystem.local_filesystem.LocalFileSystem",
+        "minio": "de_platform.services.filesystem.minio_filesystem.MinioFileSystem",
     },
     "cache": {
         "memory": "de_platform.services.cache.memory_cache.MemoryCache",
@@ -27,6 +28,7 @@ REGISTRY: dict[str, dict[str, str]] = {
     "metrics": {
         "noop": "de_platform.services.metrics.noop_metrics.NoopMetrics",
         "memory": "de_platform.services.metrics.memory_metrics.MemoryMetrics",
+        "prometheus": "de_platform.services.metrics.prometheus_metrics.PrometheusMetrics",
     },
     "secrets": {
         "env": "de_platform.services.secrets.env_secrets.EnvSecrets",

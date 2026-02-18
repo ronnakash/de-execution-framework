@@ -8,6 +8,8 @@ dependencies = [
     "redis>=5.0",
     "confluent-kafka>=2.3",
     "aiohttp>=3.9",
+    "minio>=7.0",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

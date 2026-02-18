@@ -1,39 +1,96 @@
 {
   "name": "batch_etl",
-  "display_name": "Batch ETL Job",
-  "description": "Reads raw data from the data lake, applies transformations (deduplication, validation, type casting), and writes cleaned data to the warehouse database.",
+  "display_name": "Generic Batch ETL Job",
+  "description": "Runs a configurable Extract-Transform-Load pipeline. Supply dotted class paths for the extractor, zero or more transformers (comma-separated), and the loader. Each step's processing method and worker count can be controlled via flags or left to the implementation defaults.",
   "type": "job",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "args": [
     {
-      "name": "date",
-      "description": "Processing date in YYYY-MM-DD format. Determines which raw data partition to read.",
+      "name": "extractor",
+      "description": "Dotted class path to an Extractor implementation (e.g. de_platform.modules.batch_etl.extractors.filesystem.FileSystemExtractor).",
       "required": true,
       "type": "string"
     },
     {
-      "name": "source-path",
-      "description": "Path prefix in the file system where raw data files are stored.",
+      "name": "loader",
+      "description": "Dotted class path to a Loader implementation (e.g. de_platform.modules.batch_etl.loaders.database.DatabaseLoader).",
       "required": true,
       "type": "string"
     },
     {
-      "name": "target-table",
-      "description": "Database table to write cleaned data into.",
+      "name": "transformers",
+      "description": "Comma-separated dotted class paths to Transformer implementations, applied in order.",
       "required": false,
       "type": "string",
-      "default": "cleaned_events"
+      "default": ""
+    },
+    {
+      "name": "extractor-params",
+      "description": "JSON object passed to the extractor's extract() method (e.g. '{\"date\":\"2025-01-01\",\"path\":\"raw/\"}').",
+      "required": false,
+      "type": "string",
+      "default": "{}"
+    },
+    {
+      "name": "transformer-params",
+      "description": "JSON object passed to each transformer as context (available via transformer.params).",
+      "required": false,
+      "type": "string",
+      "default": "{}"
+    },
+    {
+      "name": "loader-params",
+      "description": "JSON object passed to the loader as context (available via loader.params).",
+      "required": false,
+      "type": "string",
+      "default": "{}"
+    },
+    {
+      "name": "extractor-method",
+      "description": "Override the extractor's default processing_method (inline, concurrent, parallel).",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "extractor-workers",
+      "description": "Override the extractor's default worker count.",
+      "required": false,
+      "type": "integer"
+    },
+    {
+      "name": "transformer-method",
+      "description": "Override all transformers' default processing_method.",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "transformer-workers",
+      "description": "Override all transformers' default worker count.",
+      "required": false,
+      "type": "integer"
+    },
+    {
+      "name": "loader-method",
+      "description": "Override the loader's default processing_method.",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "loader-workers",
+      "description": "Override the loader's default worker count.",
+      "required": false,
+      "type": "integer"
     },
     {
       "name": "batch-size",
-      "description": "Number of records to insert per database batch.",
+      "description": "If set, items are grouped into batches of this size before reaching the loader. Set to 0 to disable batching.",
       "required": false,
       "type": "integer",
-      "default": 500
+      "default": 0
     },
     {
       "name": "dry-run",
-      "description": "If true, validate and transform data but do not write to database.",
+      "description": "If true, run the pipeline but skip the loader (useful for testing extract/transform).",
       "required": false,
       "type": "boolean",
       "default": false

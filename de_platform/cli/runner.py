@@ -247,6 +247,9 @@ def _build_container(
     """Build the DI container with all registered services."""
     container = Container()
 
+    # 0. Register the container itself so modules can resolve ETL/plugin classes
+    container.register_instance(Container, container)
+
     # 1. Bootstrap secrets (always available)
     secrets = EnvSecrets(overrides=env_overrides)
     container.register_instance(SecretsInterface, secrets)
