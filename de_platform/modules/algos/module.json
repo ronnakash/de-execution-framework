@@ -1,0 +1,8 @@
+{
+  "name": "algos",
+  "display_name": "Fraud Detection Algos",
+  "description": "Runs fraud detection algorithms on enriched events and publishes alerts",
+  "type": "service",
+  "version": "1.0.0",
+  "args": []
+}

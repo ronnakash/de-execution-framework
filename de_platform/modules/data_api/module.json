@@ -1,0 +1,10 @@
+{
+  "name": "data_api",
+  "display_name": "Data API",
+  "description": "REST API for querying alerts and events; also consumes alerts from Kafka",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {"name": "port", "type": "integer", "default": 8002, "required": false}
+  ]
+}

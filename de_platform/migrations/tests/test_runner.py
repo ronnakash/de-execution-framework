@@ -58,7 +58,7 @@ def test_down_rolls_back():
     runner.up()
     rolled_back = runner.down(count=1)
     assert len(rolled_back) == 1
-    assert rolled_back[0] == "002_create_cleaned_events_table"
+    assert rolled_back[0] == "004_create_currency_rates_table"
 
 
 def test_down_then_up():

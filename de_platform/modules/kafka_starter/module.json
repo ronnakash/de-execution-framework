@@ -1,0 +1,37 @@
+{
+  "name": "kafka_starter",
+  "display_name": "Kafka Starter",
+  "description": "Reads client events from inbound Kafka topics, validates them, and forwards valid events to normalization topics. Errors are written to a client-facing error topic.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "client-orders-topic",
+      "description": "Kafka topic the client publishes orders to.",
+      "required": false,
+      "type": "string",
+      "default": "client_orders"
+    },
+    {
+      "name": "client-executions-topic",
+      "description": "Kafka topic the client publishes executions to.",
+      "required": false,
+      "type": "string",
+      "default": "client_executions"
+    },
+    {
+      "name": "client-transactions-topic",
+      "description": "Kafka topic the client publishes transactions to.",
+      "required": false,
+      "type": "string",
+      "default": "client_transactions"
+    },
+    {
+      "name": "client-errors-topic",
+      "description": "Kafka topic where validation errors are written back to the client.",
+      "required": false,
+      "type": "string",
+      "default": "client_errors"
+    }
+  ]
+}

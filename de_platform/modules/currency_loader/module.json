@@ -1,0 +1,15 @@
+{
+  "name": "currency_loader",
+  "display_name": "Currency Rate Loader",
+  "description": "Reads currency exchange rates from a JSON file and upserts them into the currency_rates PostgreSQL table.",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "rates-file",
+      "description": "Path to a JSON file containing currency rate records: [{\"from_currency\": \"EUR\", \"to_currency\": \"USD\", \"rate\": 1.08}, ...]",
+      "required": true,
+      "type": "string"
+    }
+  ]
+}
