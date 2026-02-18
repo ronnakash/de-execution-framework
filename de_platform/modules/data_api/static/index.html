@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fraud Detection Dashboard</title>
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+
+<header>
+  <h1>&#x1F6E1; Fraud Detection Dashboard</h1>
+  <nav>
+    <button class="tab-btn active" data-tab="alerts">Alerts</button>
+    <button class="tab-btn"        data-tab="events">Events</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ── Alerts Dashboard ──────────────────────────────────────────────── -->
+  <section id="tab-alerts" class="tab-panel active">
+    <p class="panel-title">Alerts Dashboard</p>
+
+    <div class="filters">
+      <input  type="text"   id="alerts-tenant"   placeholder="Tenant ID">
+      <select id="alerts-severity">
+        <option value="">All Severities</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="critical">Critical</option>
+      </select>
+      <input  type="number" id="alerts-limit"  placeholder="Limit"  value="100" min="1" style="max-width:80px">
+      <input  type="number" id="alerts-offset" placeholder="Offset" value="0"   min="0" style="max-width:80px">
+      <button id="alerts-search">Search</button>
+      <button id="alerts-refresh">&#x21BB; Refresh</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="alerts-table">
+        <thead>
+          <tr>
+            <th>Severity</th>
+            <th>Tenant</th>
+            <th>Algorithm</th>
+            <th>Event Type</th>
+            <th>Event ID</th>
+            <th>Description</th>
+            <th>Created At</th>
+          </tr>
+        </thead>
+        <tbody id="alerts-body"></tbody>
+      </table>
+      <div id="alerts-empty" class="empty-msg hidden">No alerts found.</div>
+    </div>
+  </section>
+
+  <!-- ── Events Explorer ───────────────────────────────────────────────── -->
+  <section id="tab-events" class="tab-panel">
+    <p class="panel-title">Events Explorer</p>
+
+    <div class="filters">
+      <select id="events-type">
+        <option value="orders">Orders</option>
+        <option value="executions">Executions</option>
+        <option value="transactions">Transactions</option>
+      </select>
+      <input type="text" id="events-tenant" placeholder="Tenant ID">
+      <input type="date" id="events-date"   title="Filter by transaction date (YYYY-MM-DD)">
+      <input type="number" id="events-limit" placeholder="Limit" value="100" min="1" style="max-width:80px">
+      <button id="events-search">Search</button>
+    </div>
+
+    <div class="table-wrap">
+      <table id="events-table">
+        <thead id="events-thead"></thead>
+        <tbody id="events-body"></tbody>
+      </table>
+      <div id="events-empty" class="empty-msg hidden">No events found.</div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>

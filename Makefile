@@ -1,10 +1,13 @@
-.PHONY: test test-unit test-integration lint format run migrate infra-up infra-down
+.PHONY: test test-unit test-integration test-e2e lint format run migrate infra-up infra-down
 
 test:
-	pytest de_platform/ -v
+	pytest de_platform/ tests/ -v
 
 test-unit:
-	pytest de_platform/ -v -k "not postgres"
+	pytest de_platform/ tests/ -v -k "not postgres"
+
+test-e2e:
+	pytest tests/integration/ -v --tb=short
 
 lint:
 	ruff check de_platform/
@@ -22,7 +25,7 @@ test-integration:
 	pytest -v -k "postgres" --tb=short
 
 infra-up:
-	docker compose -f .devcontainer/docker-compose.yml up -d postgres redis minio zookeeper kafka
+	docker compose -f .devcontainer/docker-compose.yml up -d postgres redis minio zookeeper kafka clickhouse
 
 infra-down:
 	docker compose -f .devcontainer/docker-compose.yml down

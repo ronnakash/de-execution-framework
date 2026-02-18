@@ -13,6 +13,10 @@ Endpoints::
     GET /api/v1/events/executions?tenant_id=X&date=2026-01-15&limit=50
     GET /api/v1/events/transactions?tenant_id=X&date=2026-01-15&limit=50
 
+Static UI::
+
+    GET /ui/           → Alerts Dashboard + Events Explorer single-page app
+
 Alert endpoints query the alerts PostgreSQL instance.
 Event endpoints query ClickHouse (same DatabaseInterface, different backing store
 selected via CLI flag at startup).
@@ -22,8 +26,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import pathlib
 
 from aiohttp import web
+
+_STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import AsyncModule
@@ -89,6 +96,9 @@ class DataApiModule(AsyncModule):
         app.router.add_get("/api/v1/events/orders", self._get_orders)
         app.router.add_get("/api/v1/events/executions", self._get_executions)
         app.router.add_get("/api/v1/events/transactions", self._get_transactions)
+        # Serve static UI if the directory is present
+        if _STATIC_DIR.exists():
+            app.router.add_static("/ui", _STATIC_DIR)
         return app
 
     # ── Alert endpoints ───────────────────────────────────────────────────────
