@@ -63,9 +63,9 @@ class DataApiModule(AsyncModule):
     async def initialize(self) -> None:
         self.log = self.logger.create()
         self.port = self.config.get("port", 8002)
-        self.db.connect()
+        await self.db.connect_async()
         self.lifecycle.on_shutdown(self._stop_server)
-        self.lifecycle.on_shutdown(self.db.disconnect)
+        self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info("Data API initialized", port=self.port)
 
     async def execute(self) -> int:

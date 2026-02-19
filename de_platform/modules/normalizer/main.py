@@ -72,10 +72,10 @@ class NormalizerModule(AsyncModule):
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
-        self.db.connect()
+        await self.db.connect_async()
         self.deduplicator = EventDeduplicator(self.cache)
         self.currency_converter = CurrencyConverter(self.db, self.cache)
-        self.lifecycle.on_shutdown(self.db.disconnect)
+        self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info("Normalizer initialized")
 
     async def execute(self) -> int:

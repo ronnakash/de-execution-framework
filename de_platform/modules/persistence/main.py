@@ -73,10 +73,10 @@ class PersistenceModule(AsyncModule):
         self.log = self.logger.create()
         self.flush_interval = int(self.config.get("flush-interval", 60))
         self.flush_threshold = int(self.config.get("flush-threshold", 100_000))
-        self.db.connect()
+        await self.db.connect_async()
         self.buffer = TenantBuffer(self.flush_interval, self.flush_threshold)
         self.lifecycle.on_shutdown(self._flush_all)
-        self.lifecycle.on_shutdown(self.db.disconnect)
+        self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info(
             "Persistence initialized",
             flush_interval=self.flush_interval,

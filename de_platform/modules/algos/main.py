@@ -57,13 +57,17 @@ class AlgosModule(AsyncModule):
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
-        self.db.connect()
+        await self.db.connect_async()
+        suspicious_ids_str: str = self.config.get("suspicious-counterparty-ids", "")
+        suspicious_ids: set[str] = (
+            {x.strip() for x in suspicious_ids_str.split(",") if x.strip()}
+        )
         self.algorithms = [
             LargeNotionalAlgo(threshold_usd=1_000_000),
             VelocityAlgo(cache=self.cache),
-            SuspiciousCounterpartyAlgo(suspicious_ids=set()),
+            SuspiciousCounterpartyAlgo(suspicious_ids=suspicious_ids),
         ]
-        self.lifecycle.on_shutdown(self.db.disconnect)
+        self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info(
             "Algos initialized",
             algorithms=[a.name() for a in self.algorithms],

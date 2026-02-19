@@ -36,3 +36,16 @@ class DatabaseInterface(ABC):
 
     @abstractmethod
     def health_check(self) -> bool: ...
+
+    # -- Async wrappers -------------------------------------------------------
+    # Concrete defaults so callers can always use the async API.
+    # Subclasses with a native async implementation (e.g. PostgresDatabase)
+    # should override these directly.
+
+    async def connect_async(self) -> None:
+        """Async connect — default delegates to the sync version."""
+        self.connect()
+
+    async def disconnect_async(self) -> None:
+        """Async disconnect — default delegates to the sync version."""
+        self.disconnect()
