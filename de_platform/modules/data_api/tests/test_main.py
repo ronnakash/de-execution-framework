@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.data_api.main import DataApiModule
 from de_platform.pipeline.topics import ALERTS
+from de_platform.services.database.factory import DatabaseFactory
 from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
@@ -42,17 +43,25 @@ def _make_alert(
     }
 
 
+def _make_db_factory(db: MemoryDatabase | None = None) -> tuple[DatabaseFactory, MemoryDatabase]:
+    db = db or MemoryDatabase()
+    factory = DatabaseFactory({})
+    factory.register_instance("events", db)
+    factory.register_instance("alerts", db)
+    return factory, db
+
+
 async def _setup_module(
     db: MemoryDatabase | None = None,
 ) -> tuple[DataApiModule, MemoryQueue, MemoryDatabase]:
     mq = MemoryQueue()
-    db = db or MemoryDatabase()
+    db_factory, db = _make_db_factory(db)
     lifecycle = LifecycleManager()
     logger = LoggerFactory(default_impl="memory")
     config = ModuleConfig({"port": 0})
 
     module = DataApiModule(
-        config=config, logger=logger, mq=mq, db=db, lifecycle=lifecycle
+        config=config, logger=logger, mq=mq, db_factory=db_factory, lifecycle=lifecycle
     )
     await module.initialize()
     return module, mq, db

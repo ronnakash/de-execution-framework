@@ -35,6 +35,7 @@ _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import AsyncModule
 from de_platform.pipeline.topics import ALERTS
+from de_platform.services.database.factory import DatabaseFactory
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
@@ -50,22 +51,26 @@ class DataApiModule(AsyncModule):
         config: ModuleConfig,
         logger: LoggerFactory,
         mq: MessageQueueInterface,
-        db: DatabaseInterface,
+        db_factory: DatabaseFactory,
         lifecycle: LifecycleManager,
     ) -> None:
         self.config = config
         self.logger = logger
         self.mq = mq
-        self.db = db
+        self.db_factory = db_factory
         self.lifecycle = lifecycle
         self._runner: web.AppRunner | None = None
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
         self.port = self.config.get("port", 8002)
-        await self.db.connect_async()
+        self.events_db: DatabaseInterface = self.db_factory.get("events")
+        self.alerts_db: DatabaseInterface = self.db_factory.get("alerts")
+        await self.events_db.connect_async()
+        await self.alerts_db.connect_async()
         self.lifecycle.on_shutdown(self._stop_server)
-        self.lifecycle.on_shutdown(self.db.disconnect_async)
+        self.lifecycle.on_shutdown(self.events_db.disconnect_async)
+        self.lifecycle.on_shutdown(self.alerts_db.disconnect_async)
         self.log.info("Data API initialized", port=self.port)
 
     async def execute(self) -> int:
@@ -86,7 +91,7 @@ class DataApiModule(AsyncModule):
         """Pull one alert off the Kafka topic and persist it."""
         msg = self.mq.consume_one(ALERTS)
         if msg:
-            self.db.bulk_insert("alerts", [msg])
+            self.alerts_db.bulk_insert("alerts", [msg])
             self.log.info("Alert persisted", alert_id=msg.get("alert_id", ""))
 
     def _create_app(self) -> web.Application:
@@ -109,7 +114,7 @@ class DataApiModule(AsyncModule):
         limit = int(request.rel_url.query.get("limit", 50))
         offset = int(request.rel_url.query.get("offset", 0))
 
-        rows = self.db.fetch_all("SELECT * FROM alerts")
+        rows = self.alerts_db.fetch_all("SELECT * FROM alerts")
         if tenant_id:
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if severity:
@@ -118,7 +123,7 @@ class DataApiModule(AsyncModule):
 
     async def _get_alert_by_id(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
-        rows = self.db.fetch_all("SELECT * FROM alerts")
+        rows = self.alerts_db.fetch_all("SELECT * FROM alerts")
         for row in rows:
             if row.get("alert_id") == alert_id:
                 return web.json_response(row)
@@ -145,7 +150,7 @@ class DataApiModule(AsyncModule):
         date = request.rel_url.query.get("date")
         limit = int(request.rel_url.query.get("limit", 50))
 
-        rows = self.db.fetch_all(f"SELECT * FROM {table}")
+        rows = self.events_db.fetch_all(f"SELECT * FROM {table}")
         if tenant_id:
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if date:

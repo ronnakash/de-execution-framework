@@ -89,3 +89,17 @@ CREATE TABLE IF NOT EXISTS normalization_errors
 )
 ENGINE = MergeTree()
 ORDER BY (tenant_id, created_at);
+
+CREATE TABLE IF NOT EXISTS alerts
+(
+    alert_id    String,
+    algorithm   String,
+    severity    String,
+    tenant_id   String,
+    event_id    String,
+    event_type  String,
+    details     String,
+    created_at  String
+)
+ENGINE = MergeTree()
+ORDER BY (tenant_id, created_at);

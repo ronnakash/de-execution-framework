@@ -18,6 +18,8 @@ class KafkaQueue(MessageQueueInterface):
         self._producer: Any = None
         self._consumer: Any = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
+        self._subscribed_topics: set[str] = set()
+        self._topic_buffer: dict[str, list[Any]] = {}
 
     def connect(self) -> None:
         from confluent_kafka import Consumer, Producer
@@ -48,19 +50,40 @@ class KafkaQueue(MessageQueueInterface):
         self._handlers.setdefault(topic, []).append(handler)
         if self._consumer is None:
             self.connect()
-        topics = list(self._handlers.keys())
-        self._consumer.subscribe(topics)
+        self._subscribed_topics.add(topic)
+        self._consumer.subscribe(list(self._subscribed_topics))
 
     def consume_one(self, topic: str) -> Any | None:
+        # 1. Check buffer first
+        if self._topic_buffer.get(topic):
+            value = self._topic_buffer[topic].pop(0)
+            for handler in self._handlers.get(topic, []):
+                handler(value)
+            return value
+
         if self._consumer is None:
             return None
+
+        # 2. Auto-subscribe if needed
+        if topic not in self._subscribed_topics:
+            self._subscribed_topics.add(topic)
+            self._consumer.subscribe(list(self._subscribed_topics))
+
+        # 3. Poll and filter by topic
         msg = self._consumer.poll(timeout=1.0)
         if msg is None or msg.error():
             return None
+
         value = json.loads(msg.value().decode("utf-8"))
-        for handler in self._handlers.get(msg.topic(), []):
-            handler(value)
-        return value
+        msg_topic = msg.topic()
+
+        if msg_topic == topic:
+            for handler in self._handlers.get(topic, []):
+                handler(value)
+            return value
+        else:
+            self._topic_buffer.setdefault(msg_topic, []).append(value)
+            return None
 
     def health_check(self) -> bool:
         if self._producer is None:

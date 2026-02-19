@@ -30,6 +30,10 @@ class DatabaseFactory:
         self._configs = configs
         self._instances: dict[str, DatabaseInterface] = {}
 
+    def register_instance(self, name: str, instance: DatabaseInterface) -> None:
+        """Register a pre-built DB instance (useful for testing)."""
+        self._instances[name] = instance
+
     def get(self, name: str = "default") -> DatabaseInterface:
         if name in self._instances:
             return self._instances[name]

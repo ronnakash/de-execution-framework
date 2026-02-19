@@ -1,18 +1,19 @@
-"""Matrix E2E tests for the fraud detection pipeline.
+"""Matrix E2E tests with real infrastructure.
 
-Tests all combinations of:
-  - 3 ingestion methods: REST, Kafka, Files
-  - 3 event types:       order, execution, transaction
-  - 3 data scenarios:    100 valid events / 100 invalid events / same event 100×
+Same 27 matrix + 7 general test cases as tests/integration/test_matrix_e2e.py,
+but using real Postgres, ClickHouse, Redis, Kafka, and MinIO instead of
+in-memory stubs.  Modules are instantiated directly and stepped manually.
 
-Plus general tests for deduplication and alert generation
-  (per ingestion method and per algorithm).
+Requires: ``pytest -m real_infra`` or ``make test-real-infra``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
+from typing import Any
 
 import pytest
 from aiohttp import web
@@ -27,7 +28,6 @@ from de_platform.modules.persistence.buffer import BufferKey
 from de_platform.modules.persistence.main import PersistenceModule
 from de_platform.modules.rest_starter.main import dto_to_message_from_raw
 from de_platform.pipeline.algorithms import (
-    LargeNotionalAlgo,
     SuspiciousCounterpartyAlgo,
     VelocityAlgo,
 )
@@ -45,12 +45,13 @@ from de_platform.pipeline.topics import (
     TX_NORMALIZATION,
 )
 from de_platform.pipeline.validation import validate_events
-from de_platform.services.cache.memory_cache import MemoryCache
-from de_platform.services.database.memory_database import MemoryDatabase
-from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
+from de_platform.services.database.factory import DatabaseFactory
+from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+
+pytestmark = [pytest.mark.real_infra]
 
 # ── Parametrization ───────────────────────────────────────────────────────────
 
@@ -154,7 +155,7 @@ def _make_transaction(
     }
 
 
-_FACTORIES = {
+_FACTORIES: dict[str, Any] = {
     "order": _make_order,
     "execution": _make_execution,
     "transaction": _make_transaction,
@@ -162,13 +163,32 @@ _FACTORIES = {
 
 
 def _invalid_event(event_type: str) -> dict:
-    """Return an event with an empty id — fails the non_empty_str validation check."""
+    """Return an event with an empty id — fails validation."""
     evt = _FACTORIES[event_type]()
     evt["id"] = ""
     return evt
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+# ── Polling helpers ──────────────────────────────────────────────────────────
+
+
+def _wait_for_rows(
+    db: DatabaseInterface, query: str, expected: int, timeout: float = 15.0
+) -> list[dict[str, Any]]:
+    """Poll a DB query until the row count reaches `expected` or timeout."""
+    deadline = time.monotonic() + timeout
+    rows: list[dict[str, Any]] = []
+    while time.monotonic() < deadline:
+        rows = db.fetch_all(query)
+        if len(rows) >= expected:
+            return rows
+        time.sleep(0.3)
+    return rows
+
+
+# ── Module fixtures (real infra) ─────────────────────────────────────────────
+# We use MemoryQueue for inter-module communication within the test process,
+# while the actual data stores (Postgres, ClickHouse, Redis, MinIO) are real.
 
 
 @pytest.fixture
@@ -177,42 +197,13 @@ def mq() -> MemoryQueue:
 
 
 @pytest.fixture
-def cache() -> MemoryCache:
-    c = MemoryCache()
-    # Pre-seed exchange rates so CurrencyConverter uses cache instead of DB.
-    # MemoryDatabase cannot parse the two-column WHERE clause used by CurrencyConverter.
-    c.set("currency_rate:EUR_USD", 1.10)
-    c.set("currency_rate:GBP_USD", 1.25)
-    return c
-
-
-@pytest.fixture
-def fs() -> MemoryFileSystem:
-    return MemoryFileSystem()
-
-
-@pytest.fixture
-def clickhouse_db() -> MemoryDatabase:
-    db = MemoryDatabase()
-    db.connect()
-    return db
-
-
-@pytest.fixture
-def alerts_db() -> MemoryDatabase:
-    db = MemoryDatabase()
-    db.connect()
-    return db
-
-
-@pytest.fixture
-async def normalizer(mq: MemoryQueue, cache: MemoryCache) -> NormalizerModule:
+async def normalizer(mq, redis_cache, warehouse_db):
     module = NormalizerModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
-        cache=cache,
-        db=MemoryDatabase(),  # separate DB for currency rates (not shared with clickhouse_db)
+        cache=redis_cache,
+        db=warehouse_db,
         lifecycle=LifecycleManager(),
     )
     await module.initialize()
@@ -220,18 +211,13 @@ async def normalizer(mq: MemoryQueue, cache: MemoryCache) -> NormalizerModule:
 
 
 @pytest.fixture
-async def persistence(
-    mq: MemoryQueue,
-    clickhouse_db: MemoryDatabase,
-    fs: MemoryFileSystem,
-) -> PersistenceModule:
+async def persistence(mq, clickhouse_db, minio_fs):
     module = PersistenceModule(
-        # flush-threshold=1 → flush after each row for deterministic row counts in tests
         config=ModuleConfig({"flush-threshold": 1, "flush-interval": 0}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
         db=clickhouse_db,
-        fs=fs,
+        fs=minio_fs,
         lifecycle=LifecycleManager(),
     )
     await module.initialize()
@@ -239,17 +225,13 @@ async def persistence(
 
 
 @pytest.fixture
-async def algos(
-    mq: MemoryQueue,
-    alerts_db: MemoryDatabase,
-    cache: MemoryCache,
-) -> AlgosModule:
+async def algos(mq, alerts_db, redis_cache):
     module = AlgosModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
         db=alerts_db,
-        cache=cache,
+        cache=redis_cache,
         lifecycle=LifecycleManager(),
     )
     await module.initialize()
@@ -260,7 +242,6 @@ async def algos(
 
 
 def _run_normalizer(normalizer: NormalizerModule, event_type: str, count: int) -> None:
-    """Poll the normalization topic once per event."""
     topic = _NORM_TOPIC[event_type]
     category = _CATEGORY[event_type]
     for _ in range(count):
@@ -270,10 +251,6 @@ def _run_normalizer(normalizer: NormalizerModule, event_type: str, count: int) -
 def _drain_all_into_persistence(
     persistence: PersistenceModule, mq: MemoryQueue
 ) -> None:
-    """Consume every message from all pipeline topics into the buffer, then flush.
-
-    Handles: valid event topics, duplicates, and normalization_errors.
-    """
     assert persistence.buffer is not None
     all_topic_tables = [
         (ORDERS_PERSISTENCE, "orders"),
@@ -287,10 +264,7 @@ def _drain_all_into_persistence(
             msg = mq.consume_one(topic)
             if msg is None:
                 break
-            key = BufferKey(
-                tenant_id=msg.get("tenant_id", "unknown"),
-                table=table,
-            )
+            key = BufferKey(tenant_id=msg.get("tenant_id", "unknown"), table=table)
             persistence.buffer.append(key, msg)
     persistence._flush_all()
 
@@ -298,7 +272,6 @@ def _drain_all_into_persistence(
 def _drain_algos_topics(
     algos: AlgosModule, mq: MemoryQueue, event_type: str
 ) -> None:
-    """Consume all messages from the algos topic and evaluate them."""
     topic = _ALGOS_TOPIC[event_type]
     while True:
         msg = mq.consume_one(topic)
@@ -311,8 +284,6 @@ def _drain_algos_topics(
 
 
 def _build_rest_app(mq: MemoryQueue) -> web.Application:
-    """Build the aiohttp ingestion app for REST-based tests (no full module lifecycle)."""
-
     async def _handle(request: web.Request, event_type: str) -> web.Response:
         body = await request.json()
         events = body.get("events", [])
@@ -332,20 +303,13 @@ def _build_rest_app(mq: MemoryQueue) -> web.Application:
     return app
 
 
-async def _ingest_rest(
-    mq: MemoryQueue, event_type: str, events: list[dict]
-) -> None:
+async def _ingest_rest(mq: MemoryQueue, event_type: str, events: list[dict]) -> None:
     app = _build_rest_app(mq)
     async with TestClient(TestServer(app)) as client:
-        await client.post(
-            f"/api/v1/{_REST_PATH[event_type]}",
-            json={"events": events},
-        )
+        await client.post(f"/api/v1/{_REST_PATH[event_type]}", json={"events": events})
 
 
-async def _ingest_kafka(
-    mq: MemoryQueue, event_type: str, events: list[dict]
-) -> None:
+async def _ingest_kafka(mq: MemoryQueue, event_type: str, events: list[dict]) -> None:
     starter = KafkaStarterModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
@@ -358,16 +322,14 @@ async def _ingest_kafka(
         starter._process_message(event_type, topic, raw)
 
 
-def _ingest_files(
-    fs: MemoryFileSystem, mq: MemoryQueue, event_type: str, events: list[dict]
-) -> None:
+def _ingest_files(minio_fs, mq: MemoryQueue, event_type: str, events: list[dict]) -> None:
     path = f"ingest/{event_type}/{uuid.uuid4().hex[:8]}.jsonl"
     content = "\n".join(json.dumps(e) for e in events).encode()
-    fs.write(path, content)
+    minio_fs.write(path, content)
     module = FileProcessorModule(
         config=ModuleConfig({"file-path": path, "event-type": event_type}),
         logger=LoggerFactory(default_impl="memory"),
-        fs=fs,
+        fs=minio_fs,
         mq=mq,
     )
     module.initialize()
@@ -375,21 +337,13 @@ def _ingest_files(
     module.execute()
 
 
-async def _ingest(
-    method: str,
-    event_type: str,
-    events: list[dict],
-    mq: MemoryQueue,
-    fs: MemoryFileSystem,
-) -> None:
+async def _ingest(method, event_type, events, mq, minio_fs) -> None:
     if method == "rest":
         await _ingest_rest(mq, event_type, events)
     elif method == "kafka":
         await _ingest_kafka(mq, event_type, events)
     elif method == "files":
-        _ingest_files(fs, mq, event_type, events)
-    else:
-        raise ValueError(f"Unknown ingestion method: {method!r}")
+        _ingest_files(minio_fs, mq, event_type, events)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -402,39 +356,36 @@ async def test_100_valid_events_reach_clickhouse_and_api(
     method: str,
     event_type: str,
     mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    clickhouse_db: MemoryDatabase,
-    alerts_db: MemoryDatabase,
+    minio_fs,
+    clickhouse_db,
+    alerts_db,
     normalizer: NormalizerModule,
     persistence: PersistenceModule,
 ) -> None:
-    """100 valid events → 100 enriched rows in ClickHouse, 0 errors, accessible via API."""
+    """100 valid events -> 100 enriched rows in ClickHouse, 0 errors, accessible via API."""
     events = [_FACTORIES[event_type]() for _ in range(100)]
 
-    await _ingest(method, event_type, events, mq, fs)
+    await _ingest(method, event_type, events, mq, minio_fs)
     _run_normalizer(normalizer, event_type, 100)
     _drain_all_into_persistence(persistence, mq)
 
     _, table = _PERSIST_TOPIC_TABLE[event_type]
-    rows = clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+    rows = _wait_for_rows(clickhouse_db, f"SELECT * FROM {table}", 100)
     assert len(rows) == 100, f"Expected 100 rows in {table}, got {len(rows)}"
 
-    # Normalizer must have enriched every row
     for row in rows:
-        assert "primary_key" in row, "primary_key missing after normalization"
-        assert "normalized_at" in row, "normalized_at missing after normalization"
+        assert "primary_key" in row
+        assert "normalized_at" in row
         if event_type in ("order", "execution"):
             assert "notional_usd" in row
         else:
             assert "amount_usd" in row
 
-    # No validation errors should exist
-    assert clickhouse_db.fetch_all("SELECT * FROM normalization_errors") == []
+    error_rows = clickhouse_db.fetch_all("SELECT * FROM normalization_errors")
+    assert error_rows == []
 
-    # Events must be accessible via the Data API
+    # Verify via Data API
     from de_platform.modules.data_api.main import DataApiModule
-    from de_platform.services.database.factory import DatabaseFactory
 
     db_factory = DatabaseFactory({})
     db_factory.register_instance("events", clickhouse_db)
@@ -454,9 +405,7 @@ async def test_100_valid_events_reach_clickhouse_and_api(
         )
         assert resp.status == 200
         body = await resp.json()
-        assert len(body) == 100, (
-            f"API returned {len(body)} events, expected 100"
-        )
+        assert len(body) == 100
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -469,36 +418,26 @@ async def test_100_invalid_events_go_to_errors_table(
     method: str,
     event_type: str,
     mq: MemoryQueue,
-    fs: MemoryFileSystem,
-    clickhouse_db: MemoryDatabase,
+    minio_fs,
+    clickhouse_db,
     normalizer: NormalizerModule,
     persistence: PersistenceModule,
 ) -> None:
-    """100 invalid events → 100 rows in normalization_errors, 0 in the valid table."""
+    """100 invalid events -> 100 rows in normalization_errors, 0 in the valid table."""
     events = [_invalid_event(event_type) for _ in range(100)]
 
-    await _ingest(method, event_type, events, mq, fs)
-
-    # Invalid events are rejected by the starter and never reach the normalization topic.
-    # Extra polls confirm nothing slips through to the normalizer.
+    await _ingest(method, event_type, events, mq, minio_fs)
     _run_normalizer(normalizer, event_type, 10)
-
     _drain_all_into_persistence(persistence, mq)
 
     _, table = _PERSIST_TOPIC_TABLE[event_type]
     valid_rows = clickhouse_db.fetch_all(f"SELECT * FROM {table}")
-    assert valid_rows == [], (
-        f"Valid table '{table}' must be empty for 100% invalid input, found {len(valid_rows)}"
-    )
+    assert valid_rows == []
 
-    error_rows = clickhouse_db.fetch_all("SELECT * FROM normalization_errors")
-    assert len(error_rows) == 100, (
-        f"Expected 100 error rows, got {len(error_rows)}"
+    error_rows = _wait_for_rows(
+        clickhouse_db, "SELECT * FROM normalization_errors", 100
     )
-    for row in error_rows:
-        assert row.get("event_type") == event_type, (
-            f"Error row has wrong event_type: {row.get('event_type')!r}"
-        )
+    assert len(error_rows) == 100
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -511,35 +450,25 @@ async def test_same_event_100_times_yields_1_valid_and_99_duplicates(
     method: str,
     event_type: str,
     mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    clickhouse_db: MemoryDatabase,
+    minio_fs,
+    clickhouse_db,
     normalizer: NormalizerModule,
     persistence: PersistenceModule,
 ) -> None:
-    """Same event data sent 100× → 1 valid row, 99 external duplicates.
-
-    Each ingestion assigns a fresh message_id, so events 2-100 share the same
-    primary_key but have different message_ids → classified as external duplicates
-    and routed to the duplicates topic.
-    """
+    """Same event 100x -> 1 valid row, 99 external duplicates."""
     fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
     events = [_FACTORIES[event_type](id_=fixed_id) for _ in range(100)]
 
-    await _ingest(method, event_type, events, mq, fs)
+    await _ingest(method, event_type, events, mq, minio_fs)
     _run_normalizer(normalizer, event_type, 100)
     _drain_all_into_persistence(persistence, mq)
 
     _, table = _PERSIST_TOPIC_TABLE[event_type]
-    valid_rows = clickhouse_db.fetch_all(f"SELECT * FROM {table}")
-    dup_rows = clickhouse_db.fetch_all("SELECT * FROM duplicates")
+    valid_rows = _wait_for_rows(clickhouse_db, f"SELECT * FROM {table}", 1)
+    dup_rows = _wait_for_rows(clickhouse_db, "SELECT * FROM duplicates", 99)
 
-    assert len(valid_rows) == 1, (
-        f"Expected exactly 1 valid row, got {len(valid_rows)}"
-    )
-    assert len(dup_rows) == 99, (
-        f"Expected 99 duplicate rows, got {len(dup_rows)}"
-    )
+    assert len(valid_rows) == 1
+    assert len(dup_rows) == 99
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -549,10 +478,9 @@ async def test_same_event_100_times_yields_1_valid_and_99_duplicates(
 
 async def test_internal_duplicate_same_message_id_is_silently_discarded(
     mq: MemoryQueue,
-    cache: MemoryCache,
     normalizer: NormalizerModule,
 ) -> None:
-    """Same event_id + same message_id → second copy dropped silently; nothing in duplicates."""
+    """Same message_id twice -> second copy dropped silently."""
     fixed_msg_id = uuid.uuid4().hex
     msg = {
         **_make_order(id_="o-fixed"),
@@ -561,22 +489,14 @@ async def test_internal_duplicate_same_message_id_is_silently_discarded(
         "event_type": "order",
     }
 
-    # First pass: goes through as a new event
     mq.publish(TRADE_NORMALIZATION, msg)
     normalizer._poll_and_process(TRADE_NORMALIZATION, "trade")
-    assert mq.consume_one(ORDERS_PERSISTENCE) is not None, (
-        "First occurrence must reach the persistence topic"
-    )
+    assert mq.consume_one(ORDERS_PERSISTENCE) is not None
 
-    # Second pass: same message_id → internal duplicate, silently discarded
     mq.publish(TRADE_NORMALIZATION, dict(msg))
     normalizer._poll_and_process(TRADE_NORMALIZATION, "trade")
-    assert mq.consume_one(ORDERS_PERSISTENCE) is None, (
-        "Internal duplicate must not reach the persistence topic"
-    )
-    assert mq.consume_one(DUPLICATES) is None, (
-        "Internal duplicate must not appear on the duplicates topic"
-    )
+    assert mq.consume_one(ORDERS_PERSISTENCE) is None
+    assert mq.consume_one(DUPLICATES) is None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -587,16 +507,13 @@ async def test_internal_duplicate_same_message_id_is_silently_discarded(
 async def _assert_large_notional_alert(
     method: str,
     mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
+    minio_fs,
     normalizer: NormalizerModule,
     algos: AlgosModule,
-    alerts_db: MemoryDatabase,
+    alerts_db,
 ) -> None:
-    """Ingest one large-notional order, run the pipeline, verify alert is generated."""
-    # $1.5 M notional_usd: quantity=5 000, price=300, currency=USD (rate 1.0)
     big_order = _make_order(quantity=5_000.0, price=300.0, currency="USD")
-    await _ingest(method, "order", [big_order], mq, fs)
+    await _ingest(method, "order", [big_order], mq, minio_fs)
     _run_normalizer(normalizer, "order", 1)
     _drain_algos_topics(algos, mq, "order")
 
@@ -606,46 +523,20 @@ async def _assert_large_notional_alert(
     assert large_notional[0]["severity"] == "high"
     assert large_notional[0]["tenant_id"] == "t1"
 
-    # Alert must also have been published to the ALERTS Kafka topic
     alert_msg = mq.consume_one(ALERTS)
-    assert alert_msg is not None, f"Alert not on ALERTS topic via {method}"
-    assert alert_msg["algorithm"] == "large_notional"
+    assert alert_msg is not None
 
 
-async def test_alert_generation_via_rest(
-    mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    normalizer: NormalizerModule,
-    algos: AlgosModule,
-    alerts_db: MemoryDatabase,
-) -> None:
-    """Large-notional order ingested via REST triggers a large_notional alert."""
-    await _assert_large_notional_alert("rest", mq, cache, fs, normalizer, algos, alerts_db)
+async def test_alert_generation_via_rest(mq, minio_fs, normalizer, algos, alerts_db):
+    await _assert_large_notional_alert("rest", mq, minio_fs, normalizer, algos, alerts_db)
 
 
-async def test_alert_generation_via_kafka(
-    mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    normalizer: NormalizerModule,
-    algos: AlgosModule,
-    alerts_db: MemoryDatabase,
-) -> None:
-    """Large-notional order ingested via Kafka triggers a large_notional alert."""
-    await _assert_large_notional_alert("kafka", mq, cache, fs, normalizer, algos, alerts_db)
+async def test_alert_generation_via_kafka(mq, minio_fs, normalizer, algos, alerts_db):
+    await _assert_large_notional_alert("kafka", mq, minio_fs, normalizer, algos, alerts_db)
 
 
-async def test_alert_generation_via_files(
-    mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    normalizer: NormalizerModule,
-    algos: AlgosModule,
-    alerts_db: MemoryDatabase,
-) -> None:
-    """Large-notional order ingested via Files triggers a large_notional alert."""
-    await _assert_large_notional_alert("files", mq, cache, fs, normalizer, algos, alerts_db)
+async def test_alert_generation_via_files(mq, minio_fs, normalizer, algos, alerts_db):
+    await _assert_large_notional_alert("files", mq, minio_fs, normalizer, algos, alerts_db)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -653,25 +544,16 @@ async def test_alert_generation_via_files(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-async def test_large_notional_algorithm(
-    mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    normalizer: NormalizerModule,
-    algos: AlgosModule,
-    alerts_db: MemoryDatabase,
-) -> None:
+async def test_large_notional_algorithm(mq, minio_fs, normalizer, algos, alerts_db):
     """LargeNotionalAlgo: fires above $1 M, silent below."""
-    # Below threshold — no alert
     small = _make_order(quantity=1.0, price=100.0, currency="USD")
-    await _ingest("kafka", "order", [small], mq, fs)
+    await _ingest("kafka", "order", [small], mq, minio_fs)
     _run_normalizer(normalizer, "order", 1)
     _drain_algos_topics(algos, mq, "order")
     assert alerts_db.fetch_all("SELECT * FROM alerts") == []
 
-    # Above threshold (5 000 × 300 = $1.5 M)
     big = _make_order(quantity=5_000.0, price=300.0, currency="USD")
-    await _ingest("kafka", "order", [big], mq, fs)
+    await _ingest("kafka", "order", [big], mq, minio_fs)
     _run_normalizer(normalizer, "order", 1)
     _drain_algos_topics(algos, mq, "order")
 
@@ -679,12 +561,11 @@ async def test_large_notional_algorithm(
     assert len(rows) == 1
     assert rows[0]["algorithm"] == "large_notional"
     assert rows[0]["severity"] == "high"
-    assert rows[0]["details"]["notional_usd"] == pytest.approx(1_500_000.0)
 
 
-async def test_velocity_algorithm(cache: MemoryCache) -> None:
-    """VelocityAlgo: no alert until max_events exceeded, alert on the next event."""
-    algo = VelocityAlgo(cache=cache, max_events=5, window_seconds=60)
+async def test_velocity_algorithm(redis_cache) -> None:
+    """VelocityAlgo: no alert until max_events exceeded."""
+    algo = VelocityAlgo(cache=redis_cache, max_events=5, window_seconds=60)
     event = {
         "event_type": "order",
         "id": "o-vel",
@@ -693,35 +574,22 @@ async def test_velocity_algorithm(cache: MemoryCache) -> None:
         "notional_usd": 1_000.0,
     }
 
-    # First 5 events: under the limit
     for i in range(5):
         result = algo.evaluate(dict(event))
-        assert result is None, f"Unexpected alert on event #{i + 1}"
+        assert result is None
 
-    # 6th event: exceeds max_events
     alert = algo.evaluate(dict(event))
-    assert alert is not None, "VelocityAlgo should fire on the 6th event"
+    assert alert is not None
     assert alert.algorithm == "velocity"
     assert alert.severity == "medium"
     assert alert.details["event_count"] == 6
-    assert alert.details["window_seconds"] == 60
-
-    # Subsequent events keep firing
-    for _ in range(3):
-        assert algo.evaluate(dict(event)) is not None
 
 
 async def test_suspicious_counterparty_algorithm(
-    mq: MemoryQueue,
-    cache: MemoryCache,
-    fs: MemoryFileSystem,
-    normalizer: NormalizerModule,
-    alerts_db: MemoryDatabase,
-) -> None:
-    """SuspiciousCounterpartyAlgo: fires on blocklisted counterparty, silent otherwise."""
+    mq, minio_fs, redis_cache, normalizer, alerts_db
+):
+    """SuspiciousCounterpartyAlgo: fires on blocklisted counterparty."""
     blocklist = {"cp-sanctioned", "cp-bad-actor"}
-
-    # Unit-level check
     algo = SuspiciousCounterpartyAlgo(suspicious_ids=blocklist)
 
     flagged_tx = {
@@ -735,34 +603,28 @@ async def test_suspicious_counterparty_algorithm(
     alert = algo.evaluate(flagged_tx)
     assert alert is not None
     assert alert.algorithm == "suspicious_counterparty"
-    assert alert.severity == "critical"
-    assert alert.details["counterparty_id"] == "cp-sanctioned"
 
     clean_tx = {**flagged_tx, "counterparty_id": "cp-legit"}
-    assert algo.evaluate(clean_tx) is None, "Clean counterparty must not trigger alert"
+    assert algo.evaluate(clean_tx) is None
 
-    # Full pipeline: ingest a suspicious transaction end-to-end
+    # Full pipeline test
     algos_module = AlgosModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
         db=alerts_db,
-        cache=cache,
+        cache=redis_cache,
         lifecycle=LifecycleManager(),
     )
     await algos_module.initialize()
-    # Override the default empty blocklist with our test blocklist
     algos_module.algorithms = [SuspiciousCounterpartyAlgo(suspicious_ids=blocklist)]
 
     suspicious_event = _make_transaction(
-        id_="tx-flagged",
-        counterparty_id="cp-bad-actor",
-        currency="USD",
+        id_="tx-flagged", counterparty_id="cp-bad-actor", currency="USD"
     )
-    await _ingest("kafka", "transaction", [suspicious_event], mq, fs)
+    await _ingest("kafka", "transaction", [suspicious_event], mq, minio_fs)
     _run_normalizer(normalizer, "transaction", 1)
 
-    # Drain transactions_algos topic and evaluate
     while True:
         msg = mq.consume_one(TRANSACTIONS_ALGOS)
         if msg is None:
@@ -770,11 +632,9 @@ async def test_suspicious_counterparty_algorithm(
         algos_module._evaluate(msg)
 
     persisted = alerts_db.fetch_all("SELECT * FROM alerts")
-    assert len(persisted) >= 1, "Alert must be persisted to the alerts table"
-    assert any(
-        r["algorithm"] == "suspicious_counterparty" for r in persisted
-    ), "Expected a suspicious_counterparty alert"
+    assert len(persisted) >= 1
+    assert any(r["algorithm"] == "suspicious_counterparty" for r in persisted)
 
     kafka_alert = mq.consume_one(ALERTS)
-    assert kafka_alert is not None, "Alert must be published to the ALERTS topic"
+    assert kafka_alert is not None
     assert kafka_alert["algorithm"] == "suspicious_counterparty"

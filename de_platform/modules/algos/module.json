@@ -4,5 +4,13 @@
   "description": "Runs fraud detection algorithms on enriched events and publishes alerts",
   "type": "service",
   "version": "1.0.0",
-  "args": []
+  "args": [
+    {
+      "name": "suspicious-counterparty-ids",
+      "description": "Comma-separated list of suspicious counterparty IDs to flag.",
+      "required": false,
+      "type": "string",
+      "default": ""
+    }
+  ]
 }

@@ -7,6 +7,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.data_api.main import DataApiModule
+from de_platform.services.database.factory import DatabaseFactory
 from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
@@ -14,11 +15,15 @@ from de_platform.services.message_queue.memory_queue import MemoryQueue
 
 
 async def _make_app() -> DataApiModule:
+    db = MemoryDatabase()
+    db_factory = DatabaseFactory({})
+    db_factory.register_instance("events", db)
+    db_factory.register_instance("alerts", db)
     module = DataApiModule(
         config=ModuleConfig({"port": 0}),
         logger=LoggerFactory(default_impl="memory"),
         mq=MemoryQueue(),
-        db=MemoryDatabase(),
+        db_factory=db_factory,
         lifecycle=LifecycleManager(),
     )
     await module.initialize()
