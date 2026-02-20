@@ -82,16 +82,16 @@ class DataApiModule(AsyncModule):
         self.log.info("Data API listening", port=self.port)
 
         while not self.lifecycle.is_shutting_down:
-            self._consume_alerts()
+            await self._consume_alerts()
             await asyncio.sleep(0.01)
 
         return 0
 
-    def _consume_alerts(self) -> None:
+    async def _consume_alerts(self) -> None:
         """Pull one alert off the Kafka topic and persist it."""
         msg = self.mq.consume_one(ALERTS)
         if msg:
-            self.alerts_db.bulk_insert("alerts", [msg])
+            await self.alerts_db.insert_one_async("alerts", msg)
             self.log.info("Alert persisted", alert_id=msg.get("alert_id", ""))
 
     def _create_app(self) -> web.Application:
@@ -114,7 +114,7 @@ class DataApiModule(AsyncModule):
         limit = int(request.rel_url.query.get("limit", 50))
         offset = int(request.rel_url.query.get("offset", 0))
 
-        rows = self.alerts_db.fetch_all("SELECT * FROM alerts")
+        rows = await self.alerts_db.fetch_all_async("SELECT * FROM alerts")
         if tenant_id:
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if severity:
@@ -123,7 +123,7 @@ class DataApiModule(AsyncModule):
 
     async def _get_alert_by_id(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
-        rows = self.alerts_db.fetch_all("SELECT * FROM alerts")
+        rows = await self.alerts_db.fetch_all_async("SELECT * FROM alerts")
         for row in rows:
             if row.get("alert_id") == alert_id:
                 return web.json_response(row)
@@ -150,7 +150,7 @@ class DataApiModule(AsyncModule):
         date = request.rel_url.query.get("date")
         limit = int(request.rel_url.query.get("limit", 50))
 
-        rows = self.events_db.fetch_all(f"SELECT * FROM {table}")
+        rows = await self.events_db.fetch_all_async(f"SELECT * FROM {table}")
         if tenant_id:
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if date:

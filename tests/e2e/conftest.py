@@ -101,10 +101,10 @@ def _start_testcontainers() -> InfraConfig:
         .with_exposed_ports(8123)
         .with_env("CLICKHOUSE_DB", "fraud_pipeline")
         .with_env("CLICKHOUSE_USER", "default")
-        .with_env("CLICKHOUSE_PASSWORD", "")
+        .with_env("CLICKHOUSE_PASSWORD", "clickhouse")
     )
     ch.start()
-    wait_for_logs(ch, "Ready for connections", timeout=30)
+    wait_for_logs(ch, "Logging trace to", timeout=30)
     containers.append(ch)
     ch_host = ch.get_container_host_ip()
     ch_port = int(ch.get_exposed_port(8123))
@@ -141,20 +141,24 @@ def _start_testcontainers() -> InfraConfig:
 
 
 def _dev_infra_config() -> InfraConfig:
-    """Return InfraConfig pointing to devcontainer services on localhost."""
+    """Return InfraConfig pointing to dev services (localhost or docker-compose names)."""
     return InfraConfig(
-        postgres_url="postgresql://platform:platform@localhost:5432/platform",
-        clickhouse_host="localhost",
-        clickhouse_port=8123,
-        clickhouse_database="fraud_pipeline",
-        clickhouse_user="default",
-        clickhouse_password="",
-        redis_url="redis://localhost:6379/0",
-        kafka_bootstrap_servers="localhost:9092",
-        minio_endpoint="localhost:9000",
-        minio_access_key="minioadmin",
-        minio_secret_key="minioadmin",
-        minio_bucket="de-platform-test",
+        postgres_url=os.environ.get(
+            "DB_WAREHOUSE_URL", "postgresql://platform:platform@localhost:5432/platform"
+        ),
+        clickhouse_host=os.environ.get("DB_CLICKHOUSE_HOST", "localhost"),
+        clickhouse_port=int(os.environ.get("DB_CLICKHOUSE_PORT", "8123")),
+        clickhouse_database=os.environ.get("DB_CLICKHOUSE_DATABASE", "fraud_pipeline"),
+        clickhouse_user=os.environ.get("DB_CLICKHOUSE_USER", "default"),
+        clickhouse_password=os.environ.get("DB_CLICKHOUSE_PASSWORD", "clickhouse"),
+        redis_url=os.environ.get("CACHE_REDIS_URL", "redis://localhost:6379/0"),
+        kafka_bootstrap_servers=os.environ.get(
+            "MQ_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+        ),
+        minio_endpoint=os.environ.get("FS_MINIO_ENDPOINT", "localhost:9000"),
+        minio_access_key=os.environ.get("FS_MINIO_ACCESS_KEY", "minioadmin"),
+        minio_secret_key=os.environ.get("FS_MINIO_SECRET_KEY", "minioadmin"),
+        minio_bucket=os.environ.get("FS_MINIO_BUCKET", "de-platform-test"),
     )
 
 

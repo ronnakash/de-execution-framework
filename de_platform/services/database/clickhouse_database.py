@@ -36,7 +36,7 @@ class ClickHouseDatabase(DatabaseInterface):
         self._port = int(secrets.get_or_default(f"{prefix}_PORT", "8123"))
         self._database = secrets.get_or_default(f"{prefix}_DATABASE", "default")
         self._user = secrets.get_or_default(f"{prefix}_USER", "default")
-        self._password = secrets.get_or_default(f"{prefix}_PASSWORD", "")
+        self._password = secrets.get_or_default(f"{prefix}_PASSWORD", "clickhouse")
         self._client: Any = None
 
     # ------------------------------------------------------------------
@@ -96,6 +96,13 @@ class ClickHouseDatabase(DatabaseInterface):
     # ------------------------------------------------------------------
     # Bulk insert (columnar — ClickHouse's preferred path)
     # ------------------------------------------------------------------
+
+    def insert_one(self, table: str, row: dict[str, Any]) -> int:
+        self._check_connected()
+        column_names = list(row.keys())
+        data = [[row[col] for col in column_names]]
+        self._client.insert(table, data, column_names=column_names)
+        return 1
 
     def bulk_insert(self, table: str, rows: list[dict[str, Any]]) -> int:
         """Insert rows into *table* using ClickHouse's columnar insert API.

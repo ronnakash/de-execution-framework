@@ -75,7 +75,7 @@ async def test_alerts_consumed_from_kafka_and_stored() -> None:
     module, mq, db = await _setup_module()
     alert = _make_alert()
     mq.publish(ALERTS, alert)
-    module._consume_alerts()
+    await module._consume_alerts()
 
     rows = db.fetch_all("SELECT * FROM alerts")
     assert len(rows) == 1

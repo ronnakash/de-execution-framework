@@ -295,7 +295,7 @@ def _drain_all_into_persistence(
     persistence._flush_all()
 
 
-def _drain_algos_topics(
+async def _drain_algos_topics(
     algos: AlgosModule, mq: MemoryQueue, event_type: str
 ) -> None:
     """Consume all messages from the algos topic and evaluate them."""
@@ -304,7 +304,7 @@ def _drain_algos_topics(
         msg = mq.consume_one(topic)
         if msg is None:
             break
-        algos._evaluate(msg)
+        await algos._evaluate(msg)
 
 
 # ── Ingestion helpers ─────────────────────────────────────────────────────────
@@ -598,7 +598,7 @@ async def _assert_large_notional_alert(
     big_order = _make_order(quantity=5_000.0, price=300.0, currency="USD")
     await _ingest(method, "order", [big_order], mq, fs)
     _run_normalizer(normalizer, "order", 1)
-    _drain_algos_topics(algos, mq, "order")
+    await _drain_algos_topics(algos, mq, "order")
 
     alerts = alerts_db.fetch_all("SELECT * FROM alerts")
     large_notional = [a for a in alerts if a.get("algorithm") == "large_notional"]
@@ -666,14 +666,14 @@ async def test_large_notional_algorithm(
     small = _make_order(quantity=1.0, price=100.0, currency="USD")
     await _ingest("kafka", "order", [small], mq, fs)
     _run_normalizer(normalizer, "order", 1)
-    _drain_algos_topics(algos, mq, "order")
+    await _drain_algos_topics(algos, mq, "order")
     assert alerts_db.fetch_all("SELECT * FROM alerts") == []
 
     # Above threshold (5 000 × 300 = $1.5 M)
     big = _make_order(quantity=5_000.0, price=300.0, currency="USD")
     await _ingest("kafka", "order", [big], mq, fs)
     _run_normalizer(normalizer, "order", 1)
-    _drain_algos_topics(algos, mq, "order")
+    await _drain_algos_topics(algos, mq, "order")
 
     rows = alerts_db.fetch_all("SELECT * FROM alerts")
     assert len(rows) == 1
@@ -767,7 +767,7 @@ async def test_suspicious_counterparty_algorithm(
         msg = mq.consume_one(TRANSACTIONS_ALGOS)
         if msg is None:
             break
-        algos_module._evaluate(msg)
+        await algos_module._evaluate(msg)
 
     persisted = alerts_db.fetch_all("SELECT * FROM alerts")
     assert len(persisted) >= 1, "Alert must be persisted to the alerts table"

@@ -71,11 +71,11 @@ services:
     image: clickhouse/clickhouse-server:latest
     ports:
       - "8123:8123"   # HTTP interface
-      - "9001:9001"   # Native protocol (avoids conflict with minio 9000)
+      - "9009:9000"   # Native protocol (remapped to avoid conflict with minio)
     environment:
       CLICKHOUSE_DB: fraud_pipeline
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: clickhouse
     volumes:
       - clickhousedata:/var/lib/clickhouse
       - ../scripts/clickhouse_init.sql:/docker-entrypoint-initdb.d/clickhouse_init.sql:ro

@@ -242,7 +242,7 @@ async def test_pipeline_end_to_end() -> None:
         "currency": "USD",
         "transact_time": "2026-01-15T10:00:00+00:00",
     }
-    algos._evaluate(big_trade)
+    await algos._evaluate(big_trade)
 
     # ── Step 9: Verify alert ──────────────────────────────────────────────
     alert_msg = mq.consume_one(ALERTS)
@@ -369,7 +369,7 @@ async def test_algos_no_alert_for_small_trade() -> None:
         "message_id": uuid.uuid4().hex,
         "notional_usd": 5_000.0, "notional": 5_000.0,
     }
-    algos._evaluate(small_trade)
+    await algos._evaluate(small_trade)
 
     assert mq.consume_one(ALERTS) is None
     assert db.fetch_all("SELECT * FROM alerts") == []

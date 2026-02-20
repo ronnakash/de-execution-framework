@@ -15,8 +15,7 @@ TRACKING_TABLE = "_migrations"
 
 CREATE_TRACKING = f"""
 CREATE TABLE IF NOT EXISTS {TRACKING_TABLE} (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL PRIMARY KEY,
     applied_at TEXT NOT NULL
 )
 """
@@ -98,7 +97,7 @@ class MigrationRunner:
             for statement in _split_statements(migration.up_sql):
                 self._db.execute(statement)
             now = datetime.utcnow().isoformat()
-            self._db.bulk_insert(TRACKING_TABLE, [{"name": migration.name, "applied_at": now}])
+            self._db.insert_one(TRACKING_TABLE, {"name": migration.name, "applied_at": now})
             applied_names.append(migration.name)
 
         return applied_names

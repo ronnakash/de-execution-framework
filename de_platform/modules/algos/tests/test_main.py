@@ -118,7 +118,7 @@ def test_unknown_counterparty_no_alert() -> None:
 async def test_alert_published_to_kafka() -> None:
     module, mq, db = await _setup_module()
     event = _make_trade_event(notional_usd=2_000_000)
-    module._evaluate(event)
+    await module._evaluate(event)
 
     assert mq.consume_one(ALERTS) is not None
 
@@ -127,7 +127,7 @@ async def test_alert_published_to_kafka() -> None:
 async def test_alert_written_to_db() -> None:
     module, mq, db = await _setup_module()
     event = _make_trade_event(notional_usd=2_000_000)
-    module._evaluate(event)
+    await module._evaluate(event)
 
     alerts = db.fetch_all("SELECT * FROM alerts")
     assert len(alerts) >= 1
@@ -138,7 +138,7 @@ async def test_alert_written_to_db() -> None:
 async def test_no_alert_for_normal_event() -> None:
     module, mq, db = await _setup_module()
     event = _make_trade_event(notional_usd=100)
-    module._evaluate(event)
+    await module._evaluate(event)
 
     # LargeNotionalAlgo and SuspiciousCounterpartyAlgo should not fire
     # VelocityAlgo: first event in window → under max_events=100

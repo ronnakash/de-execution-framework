@@ -47,6 +47,13 @@ class MemoryDatabase(DatabaseInterface):
         self._check_connected()
         return self._query(query, params)
 
+    def insert_one(self, table: str, row: dict[str, Any]) -> int:
+        self._check_connected()
+        if table not in self._tables:
+            self._tables[table] = []
+        self._tables[table].append(row)
+        return 1
+
     def bulk_insert(self, table: str, rows: list[dict[str, Any]]) -> int:
         self._check_connected()
         if table not in self._tables:

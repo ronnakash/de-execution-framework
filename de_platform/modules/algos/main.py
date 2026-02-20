@@ -79,17 +79,17 @@ class AlgosModule(AsyncModule):
             for topic in [TRADES_ALGOS, TRANSACTIONS_ALGOS]:
                 msg = self.mq.consume_one(topic)
                 if msg:
-                    self._evaluate(msg)
+                    await self._evaluate(msg)
             await asyncio.sleep(0.01)
         return 0
 
-    def _evaluate(self, event: dict[str, Any]) -> None:
+    async def _evaluate(self, event: dict[str, Any]) -> None:
         for algo in self.algorithms:
             alert = algo.evaluate(event)
             if alert:
                 alert_dict = asdict(alert)
                 self.mq.publish(ALERTS, alert_dict)
-                self.db.bulk_insert("alerts", [alert_dict])
+                await self.db.insert_one_async("alerts", alert_dict)
                 self.log.info(
                     "Alert generated",
                     algorithm=algo.name(),

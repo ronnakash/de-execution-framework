@@ -127,6 +127,13 @@ class PostgresDatabase(DatabaseInterface):
         finally:
             await self._release(conn)
 
+    async def insert_one_async(self, table: str, row: dict[str, Any]) -> int:
+        columns = list(row.keys())
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(columns)))
+        cols = ", ".join(columns)
+        query = f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
+        return await self.execute_async(query, list(row.values()))
+
     async def bulk_insert_async(self, table: str, rows: list[dict[str, Any]]) -> int:
         if not rows:
             return 0
@@ -171,6 +178,11 @@ class PostgresDatabase(DatabaseInterface):
         import asyncio
 
         return asyncio.get_event_loop().run_until_complete(self.fetch_all_async(query, params))
+
+    def insert_one(self, table: str, row: dict[str, Any]) -> int:
+        import asyncio
+
+        return asyncio.get_event_loop().run_until_complete(self.insert_one_async(table, row))
 
     def bulk_insert(self, table: str, rows: list[dict[str, Any]]) -> int:
         import asyncio
