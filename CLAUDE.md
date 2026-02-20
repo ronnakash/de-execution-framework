@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Tests
 make test                    # all tests (de_platform/ + tests/)
 make test-unit               # unit tests only (skips postgres integration tests)
-make test-e2e                # end-to-end pipeline tests (tests/integration/)
+make test-e2e                # end-to-end pipeline tests (tests/e2e/, in-memory only)
 make test-integration        # testcontainer-backed postgres tests
 
 # Run a single test
@@ -102,6 +102,6 @@ Fraud detection pipeline built on top of the framework:
 
 **Unit tests** (per-module in `de_platform/modules/<name>/tests/`): use all memory implementations, instantiate the module directly without the DI container.
 
-**E2E tests** (`tests/integration/test_pipeline_e2e.py`): wire multiple modules together with shared memory implementations, drive them synchronously via `_poll_and_process()` / `_flush_all()` / `_evaluate()`, assert on the shared `MemoryQueue` / `MemoryDatabase` / `MemoryFileSystem` state.
+**E2E tests** (`tests/e2e/`): shared test scenarios in `tests/helpers/scenarios.py` run via three harness implementations — `MemoryHarness` (in-memory, manual stepping), `ContainerHarness` (testcontainers, asyncio tasks), and `SubprocessHarness` (real infra, OS subprocesses). The `PipelineHarness` protocol and implementations live in `tests/helpers/harness.py`. `tests/e2e/test_pipeline.py` has 5 narrative tests using in-memory stubs directly.
 
 **Integration tests** (`conftest.py` root fixtures): `postgres_container` (session-scoped testcontainer) → `warehouse_db` fixture runs real migrations then yields a connected `PostgresDatabase`. Marked with `-k "postgres"`.

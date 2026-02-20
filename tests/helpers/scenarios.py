@@ -63,6 +63,13 @@ async def scenario_valid_events(
         else:
             assert "amount_usd" in row
 
+    # No validation errors should exist (errors table checked after valid rows
+    # are confirmed, so the pipeline has finished processing all events)
+    error_rows = await harness.wait_for_rows("normalization_errors", expected=0)
+    assert error_rows == [], (
+        f"Expected 0 normalization errors, got {len(error_rows)}"
+    )
+
     # Events must be accessible via the Data API
     status, body = await harness.query_api(
         f"events/{REST_ENDPOINT[event_type]}",

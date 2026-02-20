@@ -1,6 +1,16 @@
-1. we need to add a UI that data-api will use
+1. we need to add a UI that will use data-api to show the clients events, alerts, errors, duplicate counts, ect
 2. we need to add auth to the system so the frontend can communicate with data-api securely. Auth should suport multiple users for a single tenant and all users are assigned to a tenant. Users of each tenant can only access the tenants data
 3. we should have a client configuration page where we can change stuff about the client
 4. we should have adjustable thresholds for algorithms on a per-client basis that the algos will use when running the algo on a clients data
 5. we can set clients as realtime or batch clients. We will only send the clients data to the algos service if it is a realtime client
-6
+6. we need to have a way to cache client data in services (like realtime/batch in normalizer to know if to send to algo, thresholds in algos service) and have them update upon change immediately. I think the right approach is to fetch on startup and periodically and also set up redis pub-sub to read updates
+7. for the last 2 changes we should add a client configuration service to manage all of that and will have it's own postgres database to store the configrations
+8. we need to have a rewrite of the algos. Algos should run on ranges of a configurable size batch of data (usually time range, of about 5-10 minutes) ordered by timestamp. it should be run on a sliding window of data
+9. use the new algos logic in 2 ways - the existing algos service and a new algos module that will take a client and time range and run the algos on that (it will take a day usually so each run will also have a sliding window)
+10. add e2e tests to all of that stuff
+11. our current e2e tests are mixing what I think sould be separate - algo and data logic. We should reorganize our tests such that algos related tests and data related tests are separated.
+12. we should also have e2e tests hit the UI and search for inserted events, alerts, ect
+13. I think there should be a service that is meant to keep track of incoming data, processed, errors, and duplicate counts and have that data accesible to the client. We should have per-file data if the client uploaded files, and per-day data for each of rest and kafka. They should also be different entries. The service will calculate the counts and store it in it's own dedicated postgresql database and the UI will query it in a dedicated page called data audit
+
+
+write a detailed plan to implement the changes. We should have it executeable step-by-step and have some order that makes sense to do so

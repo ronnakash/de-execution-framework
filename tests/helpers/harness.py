@@ -16,16 +16,13 @@ Three implementations:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import signal
 import socket
 import subprocess
 import sys
 import uuid
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Protocol
+from typing import Any, Callable, Protocol
 
 import aiohttp
 from aiohttp.test_utils import TestClient, TestServer
@@ -36,7 +33,6 @@ from de_platform.modules.data_api.main import DataApiModule
 from de_platform.modules.normalizer.main import NormalizerModule
 from de_platform.modules.persistence.buffer import BufferKey
 from de_platform.modules.persistence.main import PersistenceModule
-from de_platform.pipeline.algorithms import SuspiciousCounterpartyAlgo
 from de_platform.pipeline.topics import (
     ALERTS,
     DUPLICATES,

@@ -7,7 +7,7 @@ test-unit:
 	pytest de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
 
 test-e2e:
-	pytest tests/integration/ -v --tb=short
+	pytest tests/e2e/ -v -m "not real_infra" --tb=short
 
 test-real-infra:
 	pytest tests/e2e/ -v -m real_infra --tb=short -x
