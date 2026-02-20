@@ -22,8 +22,8 @@ __pycache__/
 .vscode/
 
 # Claude
-.claude/
-CLAUDE.md
+# .claude/
+# CLAUDE.md
 todo.md
 plan.md
 pipeline_design.md
