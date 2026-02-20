@@ -1,0 +1,2 @@
+1. when there are multiple validation errors for an event, we produce an error event for each of the validation errors. We should have a single error event that consolidates them all. This probably requires reworking the errors table in ClickHouse
+2. error and duplicate events should contain the original event

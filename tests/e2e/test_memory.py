@@ -1,0 +1,71 @@
+"""In-memory E2E tests via MemoryHarness.
+
+All pipeline modules are driven manually (step-by-step) using in-memory
+stubs for all infrastructure.  Fastest test suite — no Docker needed.
+
+34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests.helpers.events import FULL_MATRIX
+from tests.helpers.harness import MemoryHarness
+from tests.helpers import scenarios
+
+
+@pytest.fixture
+async def harness():
+    async with MemoryHarness() as h:
+        yield h
+
+
+@pytest.fixture
+async def harness_suspicious_cp():
+    async with MemoryHarness(
+        algos_config={"suspicious-counterparty-ids": "bad-cp-1"}
+    ) as h:
+        yield h
+
+
+# ── Matrix scenarios (27 tests) ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("method,event_type", FULL_MATRIX)
+async def test_valid_events(harness, method, event_type):
+    await scenarios.scenario_valid_events(harness, method, event_type)
+
+
+@pytest.mark.parametrize("method,event_type", FULL_MATRIX)
+async def test_invalid_events(harness, method, event_type):
+    await scenarios.scenario_invalid_events(harness, method, event_type)
+
+
+@pytest.mark.parametrize("method,event_type", FULL_MATRIX)
+async def test_duplicate_events(harness, method, event_type):
+    await scenarios.scenario_duplicate_events(harness, method, event_type)
+
+
+# ── General scenarios (7 tests) ──────────────────────────────────────────────
+
+
+async def test_internal_dedup(harness):
+    await scenarios.scenario_internal_dedup(harness)
+
+
+@pytest.mark.parametrize("method", ["rest", "kafka", "files"])
+async def test_alert_generation(harness, method):
+    await scenarios.scenario_alert_via_method(harness, method)
+
+
+async def test_large_notional_algorithm(harness):
+    await scenarios.scenario_large_notional(harness)
+
+
+async def test_velocity_algorithm(harness):
+    await scenarios.scenario_velocity(harness)
+
+
+async def test_suspicious_counterparty_algorithm(harness_suspicious_cp):
+    await scenarios.scenario_suspicious_counterparty(harness_suspicious_cp)
