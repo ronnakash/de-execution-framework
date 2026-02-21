@@ -37,7 +37,7 @@ from de_platform.pipeline.topics import (
     TRADE_NORMALIZATION,
     TX_NORMALIZATION,
 )
-from de_platform.pipeline.validation import validate_events
+from de_platform.pipeline.validation import group_errors_by_event, validate_events
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
@@ -133,10 +133,10 @@ class RestStarterModule(AsyncModule):
             msg = dto_to_message_from_raw(raw, event_type)
             self.mq.publish(topic, msg)
 
-        # Publish each invalid event individually to the errors topic
-        for err in errors:
-            raw_event = events[err.event_index] if err.event_index < len(events) else {}
-            err_msg = error_to_dict(raw_event, event_type, [err])
+        # Publish one consolidated error message per invalid event
+        for event_index, event_errors in group_errors_by_event(errors).items():
+            raw_event = events[event_index] if event_index < len(events) else {}
+            err_msg = error_to_dict(raw_event, event_type, event_errors)
             self.mq.publish(NORMALIZATION_ERRORS, err_msg)
 
         # Deduplicate error indices for response

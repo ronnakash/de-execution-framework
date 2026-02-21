@@ -138,6 +138,28 @@ async def test_custom_topic_names():
     assert msg["event_type"] == "order"
 
 
+async def test_multi_field_invalid_event_produces_single_error_message():
+    """An event with multiple validation failures should produce exactly 1 error message."""
+    mq = MemoryQueue()
+    bad = {**VALID_ORDER, "id": "", "currency": "x", "quantity": -5}
+    mq.publish("client_orders", bad)
+    await _run_with_messages(mq)
+
+    # Exactly 1 consolidated error on normalization_errors
+    err1 = mq.consume_one(NORMALIZATION_ERRORS)
+    assert err1 is not None
+    assert err1["event_type"] == "order"
+    assert len(err1["errors"]) >= 3  # id, currency, quantity at minimum
+    # No second error message
+    assert mq.consume_one(NORMALIZATION_ERRORS) is None
+
+    # Also 1 on client_errors
+    client_err = mq.consume_one("client_errors")
+    assert client_err is not None
+    assert len(client_err["errors"]) >= 3
+    assert mq.consume_one("client_errors") is None
+
+
 async def test_multiple_messages_in_one_tick():
     mq = MemoryQueue()
     mq.publish("client_orders", VALID_ORDER)

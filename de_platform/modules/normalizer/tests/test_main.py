@@ -203,8 +203,59 @@ async def test_external_duplicate_sent_to_duplicates_topic() -> None:
     mq.publish(TRADE_NORMALIZATION, msg2)
     module._poll_and_process(TRADE_NORMALIZATION, "trade")
 
-    assert mq.consume_one(DUPLICATES) is not None
+    dup = mq.consume_one(DUPLICATES)
+    assert dup is not None
+    assert "original_event" in dup
+    assert dup["original_event"]["id"] == msg2["id"]
     assert mq.consume_one(ORDERS_PERSISTENCE) is None
+
+
+@pytest.mark.asyncio
+async def test_external_duplicate_contains_original_event() -> None:
+    """The duplicate record should contain the full original event data."""
+    module, mq, cache, db = await _setup()
+    msg1 = _make_order_msg()
+    mq.publish(TRADE_NORMALIZATION, msg1)
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+    mq.consume_one(ORDERS_PERSISTENCE)
+    mq.consume_one(TRADES_ALGOS)
+
+    msg2 = dict(msg1)
+    msg2["message_id"] = uuid.uuid4().hex
+    mq.publish(TRADE_NORMALIZATION, msg2)
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+
+    dup = mq.consume_one(DUPLICATES)
+    assert dup is not None
+    original = dup["original_event"]
+    assert original["id"] == msg2["id"]
+    assert original["event_type"] == "order"
+    assert original["tenant_id"] == msg2["tenant_id"]
+    assert original["message_id"] == msg2["message_id"]
+
+
+@pytest.mark.asyncio
+async def test_external_duplicate_has_metadata_fields() -> None:
+    """Duplicate record should have event_type, primary_key, message_id, tenant_id, received_at."""
+    module, mq, cache, db = await _setup()
+    msg1 = _make_order_msg()
+    mq.publish(TRADE_NORMALIZATION, msg1)
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+    mq.consume_one(ORDERS_PERSISTENCE)
+    mq.consume_one(TRADES_ALGOS)
+
+    msg2 = dict(msg1)
+    msg2["message_id"] = uuid.uuid4().hex
+    mq.publish(TRADE_NORMALIZATION, msg2)
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+
+    dup = mq.consume_one(DUPLICATES)
+    assert dup is not None
+    assert dup["event_type"] == "order"
+    assert "primary_key" in dup and dup["primary_key"]
+    assert dup["message_id"] == msg2["message_id"]
+    assert dup["tenant_id"] == msg2["tenant_id"]
+    assert "received_at" in dup and dup["received_at"]
 
 
 @pytest.mark.asyncio

@@ -69,11 +69,12 @@ ORDER BY (tenant_id, primary_key);
 
 CREATE TABLE IF NOT EXISTS duplicates
 (
-    event_type  String,
-    primary_key String,
-    message_id  String,
-    tenant_id   String,
-    received_at String
+    event_type     String,
+    primary_key    String,
+    message_id     String,
+    tenant_id      String,
+    received_at    String,
+    original_event String
 )
 ENGINE = MergeTree()
 ORDER BY (tenant_id, primary_key);
@@ -82,8 +83,7 @@ CREATE TABLE IF NOT EXISTS normalization_errors
 (
     event_type    String,
     tenant_id     String,
-    error_field   String,
-    error_message String,
+    errors        String,
     raw_data      String,
     created_at    String
 )

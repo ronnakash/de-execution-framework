@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from de_platform.pipeline.validation import (
+    ValidationError,
+    group_errors_by_event,
     validate_events,
     validate_execution,
     validate_order,
@@ -176,6 +178,23 @@ def test_validate_events_empty_batch():
 def test_validate_events_unknown_type():
     with pytest.raises(ValueError, match="Unknown event_type"):
         validate_events("unknown", [])
+
+
+def test_group_errors_by_event():
+    errors = [
+        ValidationError(field="id", message="id is required", event_index=0),
+        ValidationError(field="currency", message="bad currency", event_index=0),
+        ValidationError(field="id", message="id is required", event_index=2),
+        ValidationError(field="price", message="bad price", event_index=1),
+        ValidationError(field="quantity", message="bad quantity", event_index=2),
+    ]
+    grouped = group_errors_by_event(errors)
+    assert set(grouped.keys()) == {0, 1, 2}
+    assert len(grouped[0]) == 2
+    assert len(grouped[1]) == 1
+    assert len(grouped[2]) == 2
+    assert grouped[0][0].field == "id"
+    assert grouped[0][1].field == "currency"
 
 
 def test_validate_events_iso8601_with_offset():

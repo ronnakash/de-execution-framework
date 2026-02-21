@@ -100,6 +100,19 @@ def validate_transaction(data: dict[str, Any], index: int) -> list[ValidationErr
     return errors
 
 
+def group_errors_by_event(
+    errors: list[ValidationError],
+) -> dict[int, list[ValidationError]]:
+    """Group a flat list of validation errors by their ``event_index``.
+
+    Returns a dict mapping each event index to the list of errors for that event.
+    """
+    grouped: dict[int, list[ValidationError]] = {}
+    for err in errors:
+        grouped.setdefault(err.event_index, []).append(err)
+    return grouped
+
+
 _VALIDATORS = {
     "order": validate_order,
     "execution": validate_execution,

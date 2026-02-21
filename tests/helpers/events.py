@@ -92,6 +92,14 @@ def make_invalid(event_type: str) -> dict[str, Any]:
     return evt
 
 
+def make_multi_invalid(event_type: str) -> dict[str, Any]:
+    """Return an event with multiple validation failures (empty id + bad currency)."""
+    evt = EVENT_FACTORY[event_type]()
+    evt["id"] = ""
+    evt["currency"] = "x"
+    return evt
+
+
 # ── Lookup maps ──────────────────────────────────────────────────────────────
 
 EVENT_FACTORY: dict[str, Callable[..., dict[str, Any]]] = {

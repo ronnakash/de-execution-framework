@@ -20,7 +20,7 @@ from de_platform.modules.kafka_starter.main import KafkaStarterModule
 from de_platform.modules.rest_starter.main import dto_to_message_from_raw
 from de_platform.pipeline.serialization import error_to_dict
 from de_platform.pipeline.topics import NORMALIZATION_ERRORS
-from de_platform.pipeline.validation import validate_events
+from de_platform.pipeline.validation import group_errors_by_event, validate_events
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 
@@ -40,9 +40,9 @@ def build_rest_app(mq: Any) -> web.Application:
         topic = NORM_TOPIC[event_type]
         for raw in valid:
             mq.publish(topic, dto_to_message_from_raw(raw, event_type))
-        for err in errors:
-            raw_event = events[err.event_index] if err.event_index < len(events) else {}
-            mq.publish(NORMALIZATION_ERRORS, error_to_dict(raw_event, event_type, [err]))
+        for event_index, event_errors in group_errors_by_event(errors).items():
+            raw_event = events[event_index] if event_index < len(events) else {}
+            mq.publish(NORMALIZATION_ERRORS, error_to_dict(raw_event, event_type, event_errors))
         rejected = {e.event_index for e in errors}
         return web.json_response({"accepted": len(valid), "rejected": len(rejected)})
 

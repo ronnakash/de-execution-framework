@@ -30,6 +30,7 @@ from tests.helpers.events import (
     EVENT_TABLE,
     REST_ENDPOINT,
     make_invalid,
+    make_multi_invalid,
     make_order,
     make_transaction,
 )
@@ -213,3 +214,64 @@ async def scenario_suspicious_counterparty(harness: PipelineHarness) -> None:
     assert suspicious, (
         "SuspiciousCounterpartyAlgo should fire for blocklisted counterparty"
     )
+
+
+async def scenario_multi_error_consolidation(
+    harness: PipelineHarness, method: str, event_type: str
+) -> None:
+    """Events with multiple validation errors produce exactly 1 error row each.
+
+    Each event has at least 2 validation failures (empty id + bad currency).
+    We ingest 10 such events and expect exactly 10 error rows, not 20+.
+    Each row should have an ``errors`` field that is a list with >= 2 entries,
+    and a ``raw_data`` field containing the original event.
+    """
+    events = [make_multi_invalid(event_type) for _ in range(10)]
+    await harness.ingest(method, event_type, events)
+
+    error_rows = await harness.wait_for_rows("normalization_errors", expected=10)
+    assert len(error_rows) == 10, (
+        f"Expected exactly 10 consolidated error rows, got {len(error_rows)}"
+    )
+    for row in error_rows:
+        errors = row.get("errors")
+        assert isinstance(errors, list), f"errors should be a list, got {type(errors)}"
+        assert len(errors) >= 2, (
+            f"Each error row should have >= 2 errors, got {len(errors)}"
+        )
+        assert row.get("raw_data") is not None, "raw_data should contain the original event"
+
+    # No valid rows should exist
+    table = EVENT_TABLE[event_type]
+    valid_rows = await harness.wait_for_rows(table, expected=0)
+    assert valid_rows == [], (
+        f"Valid table '{table}' must be empty for 100% invalid input"
+    )
+
+
+async def scenario_duplicate_contains_original_event(
+    harness: PipelineHarness,
+) -> None:
+    """Duplicate record should contain the full original event.
+
+    Ingest the same event twice (different message_id on second ingestion).
+    The duplicate row should have ``original_event`` containing the full event.
+    """
+    fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
+    event = EVENT_FACTORY["order"](id_=fixed_id)
+    await harness.ingest("kafka", "order", [event])
+
+    # First event should land in the valid table
+    rows = await harness.wait_for_rows("orders", expected=1)
+    assert len(rows) == 1
+
+    # Ingest the same event again (starter assigns new message_id)
+    await harness.ingest("kafka", "order", [event])
+
+    dup_rows = await harness.wait_for_rows("duplicates", expected=1)
+    assert len(dup_rows) == 1
+    dup = dup_rows[0]
+    assert "original_event" in dup, "duplicate row must have original_event"
+    original = dup["original_event"]
+    assert isinstance(original, dict), "original_event should be a dict"
+    assert original.get("id") == fixed_id

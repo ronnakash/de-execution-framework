@@ -108,7 +108,15 @@ class NormalizerModule(AsyncModule):
 
         if dedup_status == "external_duplicate":
             self.log.info("External duplicate detected", primary_key=primary_key)
-            self.mq.publish(DUPLICATES, msg)
+            dup_record = {
+                "event_type": event_type,
+                "primary_key": primary_key,
+                "message_id": message_id,
+                "tenant_id": msg.get("tenant_id", ""),
+                "received_at": now_iso(),
+                "original_event": msg,
+            }
+            self.mq.publish(DUPLICATES, dup_record)
             return
 
         normalized_at = now_iso()

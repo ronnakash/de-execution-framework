@@ -38,6 +38,7 @@ data_platform_phase2_spec.md
 # Environment files
 .env
 .env.*
+.envfiles/
 
 # Distribution / packaging
 dist/

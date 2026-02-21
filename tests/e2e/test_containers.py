@@ -73,3 +73,15 @@ async def test_velocity_algorithm(harness):
 
 async def test_suspicious_counterparty_algorithm(harness_suspicious_cp):
     await scenarios.scenario_suspicious_counterparty(harness_suspicious_cp)
+
+
+# ── Bug fix scenarios ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("method,event_type", FULL_MATRIX)
+async def test_multi_error_consolidation(harness, method, event_type):
+    await scenarios.scenario_multi_error_consolidation(harness, method, event_type)
+
+
+async def test_duplicate_contains_original_event(harness):
+    await scenarios.scenario_duplicate_contains_original_event(harness)

@@ -130,6 +130,19 @@ def test_file_with_errors_publishes_valid_and_errors_separately():
     assert err_msgs[0]["event_type"] == "order"
 
 
+def test_multi_field_invalid_event_produces_single_error_message():
+    """An event with multiple validation failures produces exactly 1 error message."""
+    bad = {**VALID_ORDER, "id": "", "currency": "x", "quantity": -5}
+    data = json.dumps([bad]).encode()
+    rc, mq = _run("bad_orders.json", "order", data)
+    assert rc == 0
+
+    err_msgs = _drain(mq, NORMALIZATION_ERRORS)
+    assert len(err_msgs) == 1
+    assert len(err_msgs[0]["errors"]) >= 3  # id, currency, quantity at minimum
+    assert err_msgs[0]["event_type"] == "order"
+
+
 def test_empty_file_returns_zero_no_messages():
     rc, mq = _run("empty.json", "order", b"")
     assert rc == 0

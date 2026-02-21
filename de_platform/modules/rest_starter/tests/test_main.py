@@ -47,7 +47,7 @@ def _build_app(mq: MemoryQueue) -> web.Application:
     from de_platform.modules.rest_starter.main import RestStarterModule, dto_to_message_from_raw
     from de_platform.pipeline.serialization import error_to_dict
     from de_platform.pipeline.topics import NORMALIZATION_ERRORS, TRADE_NORMALIZATION, TX_NORMALIZATION
-    from de_platform.pipeline.validation import validate_events
+    from de_platform.pipeline.validation import group_errors_by_event, validate_events
     from typing import Any
 
     async def handle(request: web.Request, event_type: str) -> web.Response:
@@ -60,9 +60,9 @@ def _build_app(mq: MemoryQueue) -> web.Application:
         topic = TRADE_NORMALIZATION if event_type in ("order", "execution") else TX_NORMALIZATION
         for raw in valid:
             mq.publish(topic, dto_to_message_from_raw(raw, event_type))
-        for err in errors:
-            raw_event = events[err.event_index] if err.event_index < len(events) else {}
-            mq.publish(NORMALIZATION_ERRORS, error_to_dict(raw_event, event_type, [err]))
+        for event_index, event_errors in group_errors_by_event(errors).items():
+            raw_event = events[event_index] if event_index < len(events) else {}
+            mq.publish(NORMALIZATION_ERRORS, error_to_dict(raw_event, event_type, event_errors))
         rejected = {e.event_index for e in errors}
         return web.json_response({
             "accepted": len(valid),
@@ -162,6 +162,23 @@ async def test_ingest_mixed_batch(client: TestClient, mq: MemoryQueue):
     body = await resp.json()
     assert body["accepted"] == 2
     assert body["rejected"] == 1
+
+
+async def test_multi_field_invalid_event_produces_single_error_message(client: TestClient, mq: MemoryQueue):
+    """An event with multiple validation failures produces 1 error on the topic."""
+    bad = {**VALID_ORDER, "id": "", "currency": "x", "quantity": -5}
+    resp = await client.post("/api/v1/orders", json={"events": [bad]})
+    body = await resp.json()
+    assert body["accepted"] == 0
+    assert body["rejected"] == 1
+    # Response still lists all individual errors
+    assert len(body["errors"]) >= 3
+
+    # Exactly 1 consolidated error message on normalization_errors
+    err_msg = mq.consume_one(NORMALIZATION_ERRORS)
+    assert err_msg is not None
+    assert len(err_msg["errors"]) >= 3
+    assert mq.consume_one(NORMALIZATION_ERRORS) is None
 
 
 async def test_invalid_json_body(client: TestClient, mq: MemoryQueue):
