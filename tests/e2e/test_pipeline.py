@@ -42,6 +42,7 @@ from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Event factories ───────────────────────────────────────────────────────────
@@ -140,6 +141,7 @@ async def test_pipeline_end_to_end() -> None:
         cache=cache,
         db=currency_db,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await normalizer.initialize()
 
@@ -191,6 +193,7 @@ async def test_pipeline_end_to_end() -> None:
         db=clickhouse_db,
         fs=fs,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await persistence.initialize()
 
@@ -228,6 +231,7 @@ async def test_pipeline_end_to_end() -> None:
         db=alerts_db,
         cache=cache,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await algos.initialize()
 
@@ -268,6 +272,7 @@ async def test_normalizer_dedup_prevents_double_processing() -> None:
         logger=LoggerFactory(default_impl="memory"),
         mq=mq, cache=cache, db=db,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await normalizer.initialize()
 
@@ -299,6 +304,7 @@ async def test_normalizer_external_duplicate_routed_to_duplicates_topic() -> Non
         logger=LoggerFactory(default_impl="memory"),
         mq=mq, cache=cache, db=db,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await normalizer.initialize()
 
@@ -333,6 +339,7 @@ async def test_persistence_shutdown_flushes_all_buffers() -> None:
         logger=LoggerFactory(default_impl="memory"),
         mq=mq, db=db, fs=fs,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await persistence.initialize()
 
@@ -361,6 +368,7 @@ async def test_algos_no_alert_for_small_trade() -> None:
         logger=LoggerFactory(default_impl="memory"),
         mq=mq, db=db, cache=cache,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await algos.initialize()
 

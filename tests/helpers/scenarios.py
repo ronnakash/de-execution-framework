@@ -64,7 +64,8 @@ async def scenario_valid_events(
     harness: PipelineHarness, method: str, event_type: str
 ) -> None:
     """100 valid events -> 100 enriched rows in the data table, accessible via API."""
-    events = [EVENT_FACTORY[event_type]() for _ in range(100)]
+    tenant_id = harness.tenant_id
+    events = [EVENT_FACTORY[event_type](tenant_id=tenant_id) for _ in range(100)]
     await harness.ingest(method, event_type, events)
 
     table = EVENT_TABLE[event_type]
@@ -90,7 +91,7 @@ async def scenario_valid_events(
     # Events must be accessible via the Data API
     status, body = await harness.query_api(
         f"events/{REST_ENDPOINT[event_type]}",
-        {"tenant_id": "acme", "limit": "200"},
+        {"tenant_id": tenant_id, "limit": "200"},
     )
     assert status == 200
     assert len(body) == 100, f"API returned {len(body)} events, expected 100"
@@ -100,7 +101,8 @@ async def scenario_invalid_events(
     harness: PipelineHarness, method: str, event_type: str
 ) -> None:
     """100 invalid events -> 100 rows in normalization_errors, 0 in valid table."""
-    events = [make_invalid(event_type) for _ in range(100)]
+    tenant_id = harness.tenant_id
+    events = [make_invalid(event_type, tenant_id=tenant_id) for _ in range(100)]
     await harness.ingest(method, event_type, events)
 
     table = EVENT_TABLE[event_type]
@@ -129,8 +131,9 @@ async def scenario_duplicate_events(
     Each ingestion assigns a fresh message_id, so events 2-100 share the same
     primary_key but have different message_ids -> classified as external duplicates.
     """
+    tenant_id = harness.tenant_id
     fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
-    events = [EVENT_FACTORY[event_type](id_=fixed_id) for _ in range(100)]
+    events = [EVENT_FACTORY[event_type](id_=fixed_id, tenant_id=tenant_id) for _ in range(100)]
     await harness.ingest(method, event_type, events)
 
     table = EVENT_TABLE[event_type]
@@ -155,9 +158,10 @@ async def scenario_internal_dedup(harness: PipelineHarness) -> None:
 
     This simulates Kafka at-least-once delivery replaying a message.
     """
+    tenant_id = harness.tenant_id
     event = {
-        **make_order(id_="o-fixed"),
-        "message_id": "dedup-test-fixed-msg-id",
+        **make_order(id_="o-fixed", tenant_id=tenant_id),
+        "message_id": f"dedup-test-{uuid.uuid4().hex[:8]}",
         "ingested_at": "2026-01-15T10:00:00+00:00",
         "event_type": "order",
     }
@@ -176,8 +180,9 @@ async def scenario_alert_via_method(
     harness: PipelineHarness, method: str
 ) -> None:
     """Large-notional order triggers a large_notional alert via the given method."""
+    tenant_id = harness.tenant_id
     # $1.5M notional_usd: quantity=5000 x price=300 x USD rate 1.0
-    big_order = make_order(quantity=5_000.0, price=300.0, currency="USD")
+    big_order = make_order(quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id)
     await harness.ingest(method, "order", [big_order])
 
     alerts = await harness.wait_for_alert(
@@ -190,8 +195,9 @@ async def scenario_alert_via_method(
 
 async def scenario_large_notional(harness: PipelineHarness) -> None:
     """LargeNotionalAlgo: fires above $1M notional_usd."""
+    tenant_id = harness.tenant_id
     # Above threshold ($1.5M = 5000 x 300 x 1.0)
-    big = make_order(quantity=5_000.0, price=300.0, currency="USD")
+    big = make_order(quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id)
     await harness.ingest("kafka", "order", [big])
     alerts = await harness.wait_for_alert(
         lambda r: r.get("algorithm") == "large_notional"
@@ -203,7 +209,8 @@ async def scenario_large_notional(harness: PipelineHarness) -> None:
 
 async def scenario_velocity(harness: PipelineHarness) -> None:
     """VelocityAlgo: fires when a tenant submits more than 100 events in the window."""
-    orders = [make_order() for _ in range(101)]
+    tenant_id = harness.tenant_id
+    orders = [make_order(tenant_id=tenant_id) for _ in range(101)]
     await harness.ingest("rest", "order", orders)
 
     alerts = await harness.wait_for_alert(
@@ -218,7 +225,8 @@ async def scenario_suspicious_counterparty(harness: PipelineHarness) -> None:
 
     Requires the harness to be configured with suspicious-counterparty-ids=bad-cp-1.
     """
-    suspicious_tx = make_transaction(counterparty_id="bad-cp-1")
+    tenant_id = harness.tenant_id
+    suspicious_tx = make_transaction(counterparty_id="bad-cp-1", tenant_id=tenant_id)
     await harness.ingest("rest", "transaction", [suspicious_tx])
 
     alerts = await harness.wait_for_alert(
@@ -242,7 +250,8 @@ async def scenario_multi_error_consolidation(
     Each row should have an ``errors`` field that is a list with >= 2 entries,
     and a ``raw_data`` field containing the original event.
     """
-    events = [make_multi_invalid(event_type) for _ in range(10)]
+    tenant_id = harness.tenant_id
+    events = [make_multi_invalid(event_type, tenant_id=tenant_id) for _ in range(10)]
     await harness.ingest(method, event_type, events)
 
     error_rows = await harness.wait_for_rows("normalization_errors", expected=10)
@@ -274,8 +283,9 @@ async def scenario_duplicate_contains_original_event(
     Ingest the same event twice (different message_id on second ingestion).
     The duplicate row should have ``original_event`` containing the full event.
     """
+    tenant_id = harness.tenant_id
     fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
-    event = EVENT_FACTORY["order"](id_=fixed_id)
+    event = EVENT_FACTORY["order"](id_=fixed_id, tenant_id=tenant_id)
     await harness.ingest("kafka", "order", [event])
 
     # First event should land in the valid table

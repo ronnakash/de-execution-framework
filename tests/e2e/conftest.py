@@ -63,6 +63,7 @@ class InfraConfig:
             "MQ_KAFKA_BOOTSTRAP_SERVERS": self.kafka_bootstrap_servers,
             "MQ_KAFKA_GROUP_ID": group_id,
             "MQ_KAFKA_POLL_TIMEOUT": "0.1",
+            "MQ_KAFKA_AUTO_OFFSET_RESET": "latest",
             "FS_MINIO_ENDPOINT": self.minio_endpoint,
             "FS_MINIO_ACCESS_KEY": self.minio_access_key,
             "FS_MINIO_SECRET_KEY": self.minio_secret_key,
@@ -129,6 +130,9 @@ def _init_schemas(request) -> None:
     if not has_real_infra:
         return
 
+    pytest.importorskip("asyncpg")
+    pytest.importorskip("clickhouse_connect")
+
     infra: InfraConfig = request.getfixturevalue("infra")
 
     from de_platform.migrations.runner import MigrationRunner
@@ -188,98 +192,12 @@ def _seed_currency_rates(db: Any) -> None:
 
 @pytest.fixture(autouse=True)
 def _cleanup_between_tests(request) -> None:
-    """Truncate all data tables and flush Redis before each test.
+    """No-op: tenant-based isolation eliminates the need for data cleanup.
 
-    Only activates for tests marked with ``real_infra``.
+    Each test uses a unique tenant_id (INTEGRATION_CLIENT_{uuid}), so data from
+    different tests never interferes. Kafka consumers use auto.offset.reset=latest
+    with unique consumer groups, so stale messages are never replayed.
     """
-    if not request.node.get_closest_marker("real_infra"):
-        return
-
-    infra: InfraConfig = request.getfixturevalue("infra")
-
-    import asyncio
-    from de_platform.services.database.postgres_database import PostgresDatabase
-    from de_platform.services.database.clickhouse_database import ClickHouseDatabase
-    from de_platform.services.cache.redis_cache import RedisCache
-    from de_platform.services.secrets.env_secrets import EnvSecrets
-
-    secrets = EnvSecrets(overrides=infra.to_env_overrides())
-
-    # Truncate Postgres tables
-    pg = PostgresDatabase(secrets=secrets, prefix="DB_WAREHOUSE")
-    asyncio.get_event_loop().run_until_complete(pg.connect_async())
-    for table in ["alerts", "currency_rates"]:
-        try:
-            pg.execute(f"TRUNCATE TABLE {table} CASCADE")
-        except Exception:
-            pass
-    # Re-seed currency rates
-    _seed_currency_rates(pg)
-    asyncio.get_event_loop().run_until_complete(pg.disconnect_async())
-
-    # Truncate ClickHouse tables
-    ch = ClickHouseDatabase(secrets=secrets)
-    ch.connect()
-    for table in ["orders", "executions", "transactions", "duplicates", "normalization_errors", "alerts"]:
-        try:
-            ch.execute(f"TRUNCATE TABLE {table}")
-        except Exception:
-            pass
-    ch.disconnect()
-
-    # Flush Redis
-    cache = RedisCache(secrets=secrets)
-    cache.connect()
-    cache.flush()
-    # Re-seed currency rates in Redis cache
-    cache.set("currency_rate:EUR_USD", 1.10)
-    cache.set("currency_rate:GBP_USD", 1.25)
-    cache.set("currency_rate:USD_USD", 1.00)
-    cache.disconnect()
-
-    # Delete and recreate Kafka topics to purge stale messages.
-    # Topics must be recreated so they exist when consumers subscribe;
-    # otherwise consumers can't get partition assignments until a slow
-    # metadata refresh (default metadata.max.age.ms = 5 minutes).
-    import time
-    from confluent_kafka.admin import AdminClient, NewTopic
-    from de_platform.pipeline.topics import (
-        TRADE_NORMALIZATION, TX_NORMALIZATION,
-        NORMALIZATION_ERRORS, DUPLICATES,
-        ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
-        TRADES_ALGOS, TRANSACTIONS_ALGOS, ALERTS,
-    )
-    admin = AdminClient({"bootstrap.servers": infra.kafka_bootstrap_servers})
-    all_topics = [
-        # Internal pipeline topics
-        TRADE_NORMALIZATION, TX_NORMALIZATION,
-        NORMALIZATION_ERRORS, DUPLICATES,
-        ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
-        TRADES_ALGOS, TRANSACTIONS_ALGOS, ALERTS,
-        # Client-facing inbound topics (used by kafka ingestion)
-        "client_orders", "client_executions", "client_transactions",
-        "client_errors",
-    ]
-    # Step 1: Delete all topics
-    futures = admin.delete_topics(all_topics, operation_timeout=30)
-    for f in futures.values():
-        try:
-            f.result(timeout=30)
-        except Exception:
-            pass
-    # Wait for Kafka to fully process deletions before recreating.
-    time.sleep(2)
-    # Step 2: Recreate topics so they exist when consumers subscribe
-    new_topics = [
-        NewTopic(t, num_partitions=1, replication_factor=1)
-        for t in all_topics
-    ]
-    futures = admin.create_topics(new_topics, operation_timeout=30)
-    for f in futures.values():
-        try:
-            f.result(timeout=30)
-        except Exception:
-            pass
 
 
 # ── Per-test Kafka isolation ─────────────────────────────────────────────────

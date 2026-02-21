@@ -4,7 +4,7 @@ Comprehensive plan for all changes listed in `docs/changes.md`.
 
 ---
 
-## Phase 1: Foundation & Code Quality
+## Phase 1: Foundation & Code Quality ✅ COMPLETE
 
 **Goal:** Fix structural issues and harden the codebase before adding features. No new services.
 
@@ -105,11 +105,495 @@ Create `tests/integration/` directory with test files for each infrastructure se
 
 ---
 
-## Phase 2: Client Configuration Service
+## Phase 2: Observability & Test Debugging
 
-**Goal:** Centralized configuration for tenants — realtime/batch mode, algo thresholds, available algos, algo run times. This is the foundation for phases 3-5.
+**Goal:** Full observability stack (metrics, structured logging, dashboards) plus a test debugging framework that makes E2E test failures immediately diagnosable. Every future phase benefits from this — new features get observable, debuggable tests for free.
 
-### 2.1 Client Configuration Service (#7)
+**Motivation:** During Phase 1 E2E debugging, root-causing failures required creating ad-hoc debug scripts and manually tracing data through Kafka topics and databases. The KafkaQueue auto-connect bug took multiple rounds of narrowing down because there was zero visibility into message flow. This phase eliminates that class of debugging pain.
+
+### 2.1 Module Metrics Emission
+
+**Problem:** `MetricsInterface` exists with three implementations (Memory, Prometheus, Noop) but zero modules actually emit metrics. No visibility into pipeline throughput, error rates, or processing latency.
+
+**Changes:**
+
+Add `MetricsInterface` as an optional constructor dependency to all pipeline modules. When metrics is not registered in the DI container (e.g. `--metrics` flag not passed), modules skip emission. When registered, every significant operation emits a metric.
+
+**Standard metric names:**
+
+| Metric | Type | Labels | Emitted by |
+|--------|------|--------|------------|
+| `events_received_total` | counter | `service`, `topic`, `event_type`, `tenant_id` | normalizer, algos, persistence |
+| `events_processed_total` | counter | `service`, `event_type`, `tenant_id`, `status` | normalizer (status=ok/error/duplicate) |
+| `events_errors_total` | counter | `service`, `error_type`, `tenant_id` | normalizer, persistence |
+| `duplicates_detected_total` | counter | `service`, `dedup_type`, `tenant_id` | normalizer (dedup_type=internal/external) |
+| `processing_duration_seconds` | histogram | `service`, `operation` | normalizer (_poll_and_process), persistence (_flush), algos (_evaluate) |
+| `rows_flushed_total` | counter | `service`, `table` | persistence |
+| `buffer_size` | gauge | `service`, `table` | persistence |
+| `alerts_generated_total` | counter | `algorithm`, `severity`, `tenant_id` | algos |
+| `http_requests_total` | counter | `service`, `endpoint`, `method`, `status_code` | data_api, rest_starter |
+| `http_request_duration_seconds` | histogram | `service`, `endpoint`, `method` | data_api, rest_starter |
+| `events_ingested_total` | counter | `service`, `event_type`, `method` | rest_starter, kafka_starter, file_processor |
+| `kafka_messages_published_total` | counter | `service`, `topic` | normalizer, algos (when publishing to downstream topics) |
+
+**Pattern for optional metrics injection:**
+
+```python
+class NormalizerModule(Module):
+    def __init__(
+        self,
+        mq: MessageQueueInterface,
+        cache: CacheInterface,
+        log: LoggingInterface,
+        lifecycle: LifecycleManager,
+        metrics: MetricsInterface | None = None,  # optional
+    ):
+        self.metrics = metrics or _NullMetrics()
+
+class _NullMetrics:
+    """No-op fallback when MetricsInterface is not registered."""
+    def counter(self, *a, **kw): pass
+    def gauge(self, *a, **kw): pass
+    def histogram(self, *a, **kw): pass
+```
+
+Alternatively, register `NoopMetrics` as the default when `--metrics` is not passed, so modules always get a non-None `MetricsInterface`. This is cleaner — the container always has a metrics instance.
+
+**Decision:** Register `NoopMetrics` as default in `_build_container()` when no `--metrics` flag is provided. This way modules declare `metrics: MetricsInterface` as a required dependency (no Optional, no null object pattern in modules). The runner handles the fallback.
+
+**Files to modify:**
+
+| File | Change |
+|------|--------|
+| `de_platform/cli/runner.py` | Register `NoopMetrics` as default `MetricsInterface` when no `--metrics` flag |
+| `de_platform/modules/normalizer/main.py` | Add `metrics: MetricsInterface` param, emit metrics in `_poll_and_process()` |
+| `de_platform/modules/persistence/main.py` | Add `metrics`, emit on flush/insert |
+| `de_platform/modules/algos/main.py` | Add `metrics`, emit on evaluate/alert |
+| `de_platform/modules/data_api/main.py` | Add `metrics`, emit on HTTP request/response |
+| `de_platform/modules/rest_starter/main.py` | Add `metrics`, emit on ingestion |
+| `de_platform/modules/kafka_starter/main.py` | Add `metrics`, emit on ingestion |
+| `de_platform/modules/file_processor/main.py` | Add `metrics`, emit on file processing |
+| All module unit tests | Update constructors to pass `MemoryMetrics()` or `NoopMetrics()` |
+
+### 2.2 Structured Logging with Loki
+
+**Current state:** `PrettyLogger` writes to stdout. `MemoryLogger` stores in-memory for tests. No centralized log aggregation.
+
+**Changes:**
+
+1. **New logger implementation:** `de_platform/services/logger/loki_logger.py`
+   - Implements `LoggingInterface`
+   - Sends structured JSON logs to Grafana Loki's HTTP push API (`/loki/api/v1/push`)
+   - Labels: `{service="normalizer", tenant_id="acme", environment="production"}`
+   - Log lines include full structured context: event_id, message_id, tenant_id, event_type, processing_stage
+   - Batches log entries and flushes periodically (every 1s or 100 entries) to avoid HTTP overhead
+
+2. **Register in registry:**
+   ```python
+   "log": {
+       "pretty": "de_platform.services.logger.pretty_logger.PrettyLogger",
+       "memory": "de_platform.services.logger.memory_logger.MemoryLogger",
+       "loki": "de_platform.services.logger.loki_logger.LokiLogger",
+   }
+   ```
+
+3. **Enrich all log calls** across modules with contextual fields:
+   - normalizer: `tenant_id`, `event_type`, `event_id`, `message_id`, `primary_key`, `dedup_status`
+   - algos: `tenant_id`, `algorithm`, `severity`, `event_id`
+   - persistence: `tenant_id`, `table`, `batch_size`
+   - data_api: `endpoint`, `tenant_id`, `status_code`
+
+4. **Docker-compose:** Add Loki service
+
+```yaml
+# Add to .devcontainer/docker-compose.yml
+loki:
+    image: grafana/loki:3.0.0
+    ports:
+        - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+```
+
+5. **Grafana datasource:** Add Loki alongside Prometheus in provisioning
+
+**Files:**
+
+| File | Change |
+|------|--------|
+| `de_platform/services/logger/loki_logger.py` | New — Loki HTTP push logger |
+| `de_platform/services/registry.py` | Register `loki` logger |
+| `de_platform/modules/*/main.py` | Enrich log calls with context fields |
+| `.devcontainer/docker-compose.yml` | Add Loki service |
+| `.devcontainer/grafana/provisioning/datasources/loki.yml` | New — Loki datasource for Grafana |
+
+### 2.3 Grafana Dashboards
+
+**Dashboard per service** provisioned as JSON files in `.devcontainer/grafana/dashboards/`:
+
+| Dashboard | Panels |
+|-----------|--------|
+| `pipeline_overview.json` | End-to-end: ingestion rate → normalization rate → persistence rate → alert rate. Error rate across all stages. Top-level health view. |
+| `normalizer.json` | Events/sec (received vs processed), error rate, dedup rate (internal vs external), avg processing time, breakdown by tenant |
+| `algos.json` | Alerts/min by algorithm, by severity, by tenant. Processing latency. Events evaluated/sec. |
+| `persistence.json` | Rows inserted/sec to ClickHouse, batch sizes, flush latency, buffer sizes |
+| `data_api.json` | HTTP request rate, latency percentiles (p50/p95/p99), error rate by endpoint |
+| `test_runs.json` | Test-specific: per-test metrics snapshots, pipeline stage throughput during test execution, failure annotations |
+
+**Metrics source:** Prometheus (already in docker-compose, scraping `app:9091`). All modules now emit metrics via `MetricsInterface` (from 2.1).
+
+**Log source:** Loki (from 2.2). Each dashboard includes a "Logs" panel with relevant LogQL queries.
+
+**Grafana provisioning** — dashboard JSON files are mounted into Grafana container:
+
+```yaml
+# .devcontainer/grafana/provisioning/dashboards/dashboards.yml
+apiVersion: 1
+providers:
+  - name: 'default'
+    folder: 'DE Platform'
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
+```
+
+**Internal log viewer:** Grafana's built-in Explore view with Loki datasource. Example query: `{service="normalizer", tenant_id="acme"} |= "error"`. No custom UI needed.
+
+**Files:**
+
+| File | Change |
+|------|--------|
+| `.devcontainer/grafana/dashboards/pipeline_overview.json` | New |
+| `.devcontainer/grafana/dashboards/normalizer.json` | New |
+| `.devcontainer/grafana/dashboards/algos.json` | New |
+| `.devcontainer/grafana/dashboards/persistence.json` | New |
+| `.devcontainer/grafana/dashboards/data_api.json` | New |
+| `.devcontainer/grafana/dashboards/test_runs.json` | New |
+| `.devcontainer/grafana/provisioning/dashboards/dashboards.yml` | Verify/update |
+
+### 2.4 Test Metrics Infrastructure
+
+**Problem:** When E2E tests fail with a timeout, there's zero visibility into where data got stuck. Was the message published to Kafka? Did the normalizer consume it? Did persistence flush it? You end up writing ad-hoc debug scripts.
+
+**Solution:** A `TestDiagnostics` class that provides a unified view of pipeline state, working with both ContainerHarness (in-process) and SubprocessHarness (OS processes).
+
+#### 2.4.1 TestDiagnostics class
+
+**New file:** `tests/helpers/diagnostics.py`
+
+```python
+@dataclass
+class PipelineSnapshot:
+    """Point-in-time snapshot of pipeline state."""
+    timestamp: float
+    kafka_topics: dict[str, TopicState]      # topic → {high_watermark, low_watermark, messages_available}
+    db_tables: dict[str, int]                 # table → row count
+    module_status: dict[str, ModuleStatus]    # module_name → {alive, exit_code, pid}
+    metrics: dict[str, float] | None          # metric_name → value (from MemoryMetrics or Prometheus scrape)
+
+@dataclass
+class TopicState:
+    high_watermark: int
+    low_watermark: int
+    messages_available: int  # high - low
+
+@dataclass
+class ModuleStatus:
+    alive: bool
+    exit_code: int | None
+    pid: int | None
+
+class TestDiagnostics:
+    """Collects pipeline state for test debugging."""
+
+    def __init__(
+        self,
+        kafka_bootstrap: str,
+        clickhouse_db: ClickHouseDatabase | None = None,
+        postgres_db: PostgresDatabase | None = None,
+        metrics: MemoryMetrics | None = None,
+        prometheus_endpoints: dict[str, str] | None = None,  # module_name → http://host:port/metrics
+        processes: dict[str, subprocess.Popen] | None = None,
+        tasks: dict[str, asyncio.Task] | None = None,
+    ): ...
+
+    def snapshot(self) -> PipelineSnapshot:
+        """Take a point-in-time snapshot of all pipeline state."""
+        ...
+
+    def kafka_watermarks(self) -> dict[str, TopicState]:
+        """Query Kafka topic watermarks via AdminClient."""
+        ...
+
+    def db_row_counts(self) -> dict[str, int]:
+        """Query row counts from ClickHouse and Postgres tables."""
+        ...
+
+    def module_health(self) -> dict[str, ModuleStatus]:
+        """Check if each module process/task is alive."""
+        ...
+
+    def scrape_prometheus(self, endpoint: str) -> dict[str, float]:
+        """Scrape a Prometheus /metrics endpoint and parse into dict."""
+        ...
+
+    def format_snapshot(self, snap: PipelineSnapshot) -> str:
+        """Format snapshot as human-readable text for terminal output."""
+        ...
+```
+
+#### 2.4.2 ContainerHarness integration
+
+- Inject a shared `MemoryMetrics` instance into all modules via the DI container
+- Store reference in `ContainerHarness.diagnostics: TestDiagnostics`
+- `diagnostics.snapshot()` reads MemoryMetrics counters directly (in-process, instant)
+- Also queries Kafka watermarks and DB row counts for ground truth
+
+#### 2.4.3 SubprocessHarness integration
+
+- Each subprocess module launched with `--metrics prometheus`
+- Each gets a unique Prometheus port (allocated via `_free_port()`)
+- `SubprocessHarness.diagnostics: TestDiagnostics` stores the port mapping
+- `diagnostics.snapshot()` scrapes each module's `/metrics` endpoint + queries Kafka/DB directly
+- On module crash, capture and include stderr output
+
+**Files:**
+
+| File | Change |
+|------|--------|
+| `tests/helpers/diagnostics.py` | New — TestDiagnostics, PipelineSnapshot, helpers |
+| `tests/helpers/harness.py` (ContainerHarness) | Initialize TestDiagnostics with shared MemoryMetrics, pass to modules |
+| `tests/helpers/harness.py` (SubprocessHarness) | Add `--metrics prometheus` to module launch, allocate Prometheus ports, initialize TestDiagnostics |
+
+### 2.5 Enhanced Timeout Diagnostics
+
+**Problem:** `TimeoutError: wait_for_rows: condition not met within timeout` tells you nothing about why.
+
+**Changes:**
+
+Modify all polling/waiting functions in both harnesses to capture and include a `PipelineSnapshot` on timeout:
+
+1. **`wait_for_rows()`**: On timeout, capture snapshot and include in error message:
+   ```
+   TimeoutError: wait_for_rows('orders', expected=100) timed out after 120s
+
+   Pipeline state at timeout:
+     Kafka topics:
+       trade_normalization: 100 messages (high=100, low=0) — messages published but not consumed
+       orders_persistence:    0 messages (high=0, low=0)
+     DB tables:
+       orders:       0 rows
+       executions:   0 rows
+       duplicates:   0 rows
+       norm_errors:  0 rows
+     Module status:
+       normalizer:   DEAD (exit code 1)
+       persistence:  alive (pid 12345)
+       algos:        alive (pid 12346)
+     Metrics (normalizer):
+       events_received_total:   0
+       events_processed_total:  0
+   ```
+
+2. **`wait_for_alert()`**: Same pattern — snapshot on timeout.
+
+3. **Health check waiters** (`_wait_for_http()`): On timeout, check if the process is still alive and include stderr if it crashed:
+   ```
+   TimeoutError: Health check failed for normalizer at http://127.0.0.1:8080/health/startup after 45s
+   Process status: DEAD (exit code 1)
+   stderr: ModuleNotFoundError: No module named 'confluent_kafka'
+   ```
+
+4. **`_check_tasks_alive()` in ContainerHarness**: When a task has failed, include the exception traceback.
+
+**Implementation:** Wrap the existing `poll_until()` function (or its callers) to catch `TimeoutError`, enrich with diagnostics, and re-raise.
+
+**Files:**
+
+| File | Change |
+|------|--------|
+| `tests/helpers/harness.py` | Enrich all timeout paths with `diagnostics.snapshot()` context |
+| `tests/helpers/diagnostics.py` | `format_snapshot()` produces the human-readable output |
+
+### 2.6 Test Report Generation
+
+**Problem:** After a 35-minute E2E test run, you want a summary of what happened — which tests passed, which failed, what the pipeline state looked like, and where to dig deeper.
+
+**Solution:** A pytest plugin that collects diagnostics on every test and generates reports in three formats.
+
+#### 2.6.1 pytest plugin
+
+**New file:** `tests/helpers/pytest_pipeline_report.py`
+
+Registered as a conftest plugin (or via `pyproject.toml` `[tool.pytest.ini_options] plugins`).
+
+**Hooks:**
+- `pytest_runtest_setup`: Record start timestamp, take "before" snapshot if harness is available
+- `pytest_runtest_teardown`: Record end timestamp, take "after" snapshot, compute deltas
+- `pytest_runtest_makereport`: Attach snapshot data to the test report item
+- `pytest_sessionfinish`: Generate JSON, HTML, and terminal reports
+
+**Per-test data collected:**
+
+```python
+@dataclass
+class TestRunData:
+    test_name: str
+    status: str  # "passed", "failed", "error", "skipped"
+    duration_seconds: float
+    start_snapshot: PipelineSnapshot | None
+    end_snapshot: PipelineSnapshot | None
+    delta: PipelineSnapshotDelta | None  # messages produced, rows inserted, etc.
+    failure_message: str | None
+    failure_traceback: str | None
+
+@dataclass
+class PipelineSnapshotDelta:
+    kafka_messages_produced: dict[str, int]  # topic → count
+    db_rows_inserted: dict[str, int]         # table → count
+    metrics_deltas: dict[str, float]         # metric → change
+```
+
+#### 2.6.2 JSON report
+
+Written to `reports/pipeline-report-{timestamp}.json` after each test session.
+
+```json
+{
+  "session": {
+    "start_time": "2026-02-21T10:00:00",
+    "duration_seconds": 2096.6,
+    "total": 99,
+    "passed": 98,
+    "failed": 1,
+    "skipped": 0
+  },
+  "tests": [
+    {
+      "name": "test_valid_events[rest-order]",
+      "status": "passed",
+      "duration_seconds": 12.3,
+      "delta": {
+        "kafka_messages_produced": {"trade_normalization": 100, "orders_persistence": 100},
+        "db_rows_inserted": {"orders": 100},
+        "metrics_deltas": {"events_processed_total": 100}
+      }
+    },
+    {
+      "name": "test_velocity_algorithm",
+      "status": "failed",
+      "duration_seconds": 60.0,
+      "failure_message": "TimeoutError: wait_for_alert: condition not met within timeout",
+      "end_snapshot": {
+        "kafka_topics": {"trades_algos": {"high_watermark": 101, "low_watermark": 101}},
+        "db_tables": {"alerts": 0},
+        "metrics": {"events_received_total": 101, "alerts_generated_total": 0}
+      }
+    }
+  ]
+}
+```
+
+#### 2.6.3 HTML report
+
+Written to `reports/pipeline-report-{timestamp}.html`. Self-contained (inline CSS/JS).
+
+**Sections:**
+- **Summary bar**: total/passed/failed/duration with color-coded status
+- **Test table**: sortable by name, status, duration. Click to expand details.
+- **Per-test details** (expandable): snapshot deltas, pipeline stage flow visualization (simple bar chart showing message counts per topic), failure traceback
+- **Pipeline overview**: aggregate metrics across all tests — total events processed, total alerts, error rates
+
+**Implementation:** Use a simple Jinja2 template (or raw string templating to avoid adding a dependency). Include minimal inline CSS for styling and vanilla JS for sorting/expanding.
+
+#### 2.6.4 Grafana test annotations
+
+Push test results as Grafana annotations so they appear on dashboards:
+
+- **On test start:** POST annotation with `tags: ["test-start", test_name]`
+- **On test end:** POST annotation with `tags: ["test-end", test_name, status]`
+- **On session end:** POST annotation with summary
+
+This lets you correlate test execution with Prometheus metrics and Loki logs on Grafana dashboards. When a test fails, you can see exactly which metrics spiked or dropped during that test's execution window.
+
+**API:** Grafana HTTP API (`POST /api/annotations`) — no auth needed for local dev Grafana (admin/admin).
+
+#### 2.6.5 Terminal summary
+
+Printed to stdout after every test session (always, not just on failure):
+
+```
+Pipeline E2E Test Report
+========================
+Duration: 34m 56s | Tests: 99 | Passed: 98 | Failed: 1
+
+Failed tests:
+  test_velocity_algorithm (60.0s)
+    TimeoutError: wait_for_alert: condition not met within timeout
+    Kafka: trades_algos=101 msgs consumed | alerts=0 msgs produced
+    DB: alerts=0 rows
+    Metrics: events_received=101, alerts_generated=0
+
+Reports written:
+  JSON: reports/pipeline-report-20260221-100000.json
+  HTML: reports/pipeline-report-20260221-100000.html
+```
+
+**Files:**
+
+| File | Change |
+|------|--------|
+| `tests/helpers/pytest_pipeline_report.py` | New — pytest plugin for report generation |
+| `tests/helpers/report_template.html` | New — Jinja2/string template for HTML report |
+| `tests/helpers/diagnostics.py` | Add `PipelineSnapshotDelta`, delta computation |
+| `tests/e2e/conftest.py` | Register the plugin, wire up harness diagnostics |
+| `pyproject.toml` | Add `reports/` to gitignore, register pytest plugin |
+| `.gitignore` | Add `reports/` directory |
+
+### 2.7 Summary of all files for Phase 2
+
+**New files:**
+
+| File | Purpose |
+|------|---------|
+| `de_platform/services/logger/loki_logger.py` | Loki HTTP push logger |
+| `.devcontainer/grafana/provisioning/datasources/loki.yml` | Loki datasource for Grafana |
+| `.devcontainer/grafana/dashboards/pipeline_overview.json` | Pipeline overview dashboard |
+| `.devcontainer/grafana/dashboards/normalizer.json` | Normalizer dashboard |
+| `.devcontainer/grafana/dashboards/algos.json` | Algos dashboard |
+| `.devcontainer/grafana/dashboards/persistence.json` | Persistence dashboard |
+| `.devcontainer/grafana/dashboards/data_api.json` | Data API dashboard |
+| `.devcontainer/grafana/dashboards/test_runs.json` | Test runs dashboard |
+| `tests/helpers/diagnostics.py` | TestDiagnostics, PipelineSnapshot, state queries |
+| `tests/helpers/pytest_pipeline_report.py` | pytest plugin for report generation |
+| `tests/helpers/report_template.html` | HTML report template |
+
+**Modified files:**
+
+| File | Change |
+|------|--------|
+| `de_platform/cli/runner.py` | Register `NoopMetrics` as default MetricsInterface |
+| `de_platform/services/registry.py` | Register `loki` logger |
+| `de_platform/modules/normalizer/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/persistence/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/algos/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/data_api/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/rest_starter/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/kafka_starter/main.py` | Add metrics + enriched logging |
+| `de_platform/modules/file_processor/main.py` | Add metrics + enriched logging |
+| `tests/helpers/harness.py` | Integrate TestDiagnostics, enrich timeouts |
+| `tests/e2e/conftest.py` | Register pytest plugin, wire diagnostics |
+| `.devcontainer/docker-compose.yml` | Add Loki service |
+| `.gitignore` | Add `reports/` |
+| `pyproject.toml` | Register pytest plugin |
+| All module unit tests | Update constructors for MetricsInterface |
+
+---
+
+## Phase 3: Client Configuration Service
+
+**Goal:** Centralized configuration for tenants — realtime/batch mode, algo thresholds, available algos, algo run times. This is the foundation for phases 5-7.
+
+### 3.1 Client Configuration Service (#7)
 
 **New module:** `de_platform/modules/client_config/`
 
@@ -156,7 +640,7 @@ PUT    /api/v1/clients/{tenant_id}/algos/{algo} — update algo thresholds/enabl
 ```
 de_platform/modules/client_config/
     __init__.py
-    main.py         # ClientConfigModule(AsyncModule) — aiohttp server
+    main.py         # ClientConfigModule(Module) — aiohttp server
     module.json     # type: "service"
     tests/
         __init__.py
@@ -165,7 +649,7 @@ de_platform/modules/client_config/
 
 **Port:** 8003 (configurable via `--port`)
 
-### 2.2 Client Configuration Fields (#3, #4, #5, #17, #18)
+### 3.2 Client Configuration Fields (#3, #4, #5, #17, #18)
 
 All configuration fields are stored in the `clients` and `client_algo_config` tables:
 
@@ -177,7 +661,7 @@ All configuration fields are stored in the `clients` and `client_algo_config` ta
   - `velocity`: `{"max_events": 100, "window_seconds": 60}`
   - `suspicious_counterparty`: `{"suspicious_ids": ["id1", "id2"]}`
 
-### 2.3 Config Caching with Redis Pub-Sub (#6)
+### 3.3 Config Caching with Redis Pub-Sub (#6)
 
 **Problem:** Services (normalizer, algos) need client config at runtime but can't query Postgres on every event.
 
@@ -209,11 +693,11 @@ All configuration fields are stored in the `clients` and `client_algo_config` ta
 
 ---
 
-## Phase 3: Authentication System
+## Phase 4: Authentication System
 
 **Goal:** JWT-based auth protecting all API endpoints. Multi-user, multi-tenant — users belong to a tenant and can only access their tenant's data.
 
-### 3.1 Auth Service (#2)
+### 4.1 Auth Service (#2)
 
 **New module:** `de_platform/modules/auth/`
 
@@ -272,7 +756,7 @@ GET  /api/v1/auth/users           — list users for tenant (admin only)
 
 **Port:** 8004 (configurable)
 
-### 3.2 Auth Middleware
+### 4.2 Auth Middleware
 
 **New shared module:** `de_platform/pipeline/auth_middleware.py`
 
@@ -286,7 +770,7 @@ GET  /api/v1/auth/users           — list users for tenant (admin only)
 - `client_config` module — admin-only access
 - Future UI static files — `/ui/*` paths (no auth, JWT checked client-side)
 
-### 3.3 Tenant-Scoped Data Access
+### 4.3 Tenant-Scoped Data Access
 
 - All API query endpoints (`data_api`, `client_config`) extract `tenant_id` from the JWT rather than accepting it as a query parameter
 - Admin users can optionally pass `?tenant_id=X` to access other tenants
@@ -294,11 +778,11 @@ GET  /api/v1/auth/users           — list users for tenant (admin only)
 
 ---
 
-## Phase 4: Algorithms Rewrite
+## Phase 5: Algorithms Rewrite
 
 **Goal:** Algos run on configurable-size sliding windows of time-ordered data. Two execution modes: realtime (streaming) and batch (historical).
 
-### 4.1 Algorithm Interface Redesign (#8)
+### 5.1 Algorithm Interface Redesign (#8)
 
 **Current state:** Each algo's `evaluate()` receives a single event and returns an Alert or None. This works for simple threshold checks but doesn't support windowed analysis.
 
@@ -343,7 +827,7 @@ class FraudAlgorithm(ABC):
 - `window_slide_minutes`: how much the window advances (default: 1)
 - Stored in `client_algo_config.thresholds` JSONB
 
-### 4.2 Realtime Algo Execution (#9 — streaming path)
+### 5.2 Realtime Algo Execution (#9 — streaming path)
 
 **Module:** `de_platform/modules/algos/main.py` (existing, modified)
 
@@ -368,7 +852,7 @@ Kafka (trades_algos/transactions_algos)
   → publish alerts
 ```
 
-### 4.3 Batch Algo Execution (#9 — historical path)
+### 5.3 Batch Algo Execution (#9 — historical path)
 
 **New module:** `de_platform/modules/batch_algos/`
 
@@ -401,7 +885,7 @@ python -m de_platform run batch_algos \
 
 **Performance:** For a full day of data, expect ~288 windows (5-min windows, 1-min slide over 24h). Each window fetches data from the already-loaded dataset in memory — no repeated DB queries.
 
-### 4.4 Update Existing Algo Tests
+### 5.4 Update Existing Algo Tests
 
 - Unit tests: test `evaluate_window()` with multi-event batches
 - Test that per-client thresholds override defaults
@@ -410,11 +894,11 @@ python -m de_platform run batch_algos \
 
 ---
 
-## Phase 5: Data Audit Service
+## Phase 6: Data Audit Service
 
 **Goal:** Track incoming data volumes, processed counts, errors, and duplicates per tenant. Queryable by the UI.
 
-### 5.1 Data Audit Service (#13)
+### 6.1 Data Audit Service (#13)
 
 **New module:** `de_platform/modules/data_audit/`
 
@@ -481,7 +965,7 @@ GET /api/v1/audit/summary?tenant_id=X   — totals across all sources/dates
 
 **Port:** 8005 (configurable)
 
-### 5.2 Pipeline Integration
+### 6.2 Pipeline Integration
 
 - **`file_processor` module:** On file processing start, create a `file_audit` row. On completion, update counts and status.
 - **`rest_starter` / `kafka_starter`:** Publish a lightweight "ingestion event" to a new `ingestion_audit` topic with metadata (tenant_id, source, event_type, count). Data audit service consumes this.
@@ -489,11 +973,11 @@ GET /api/v1/audit/summary?tenant_id=X   — totals across all sources/dates
 
 ---
 
-## Phase 6: Task Scheduler
+## Phase 7: Task Scheduler
 
 **Goal:** Centralized task scheduling and tracking. Schedule recurring jobs (currency fetch, batch algos), track run history, support custom argument generation per task.
 
-### 6.1 Task Scheduler Module (#16)
+### 7.1 Task Scheduler Module (#16)
 
 **New module:** `de_platform/modules/task_scheduler/`
 
@@ -575,7 +1059,7 @@ GET    /api/v1/runs/{run_id}             — get run details
 
 **Port:** 8006 (configurable)
 
-### 6.2 Pre-configured Tasks
+### 7.2 Pre-configured Tasks
 
 Seed the `task_definitions` table with:
 
@@ -587,11 +1071,11 @@ Seed the `task_definitions` table with:
 
 ---
 
-## Phase 7: React UI
+## Phase 8: React UI
 
 **Goal:** React + TypeScript frontend served by data_api, communicating with all backend services through a unified API gateway.
 
-### 7.1 UI Application (#1, #3)
+### 8.1 UI Application (#1, #3)
 
 **Tech stack:** React 18+ with TypeScript, Vite build tool, TanStack Query for data fetching, React Router for navigation, Tailwind CSS for styling.
 
@@ -662,7 +1146,7 @@ async function fetchWithAuth(path: string, options?: RequestInit) {
 }
 ```
 
-### 7.2 API Gateway / Proxy (#1)
+### 8.2 API Gateway / Proxy (#1)
 
 **Problem:** The UI runs from data_api (port 8002) but needs to reach auth (8004), client_config (8003), data_audit (8005), and task_scheduler (8006).
 
@@ -681,7 +1165,7 @@ Each proxy function forwards the request (with headers) to the target service us
 
 **Alternative:** Use nginx or Traefik as a reverse proxy in docker-compose. But since data_api already serves the UI, having it proxy API calls is simpler for development.
 
-### 7.3 Playwright E2E Tests (#12)
+### 8.3 Playwright E2E Tests (#12)
 
 **Dependencies to add:** `playwright` to `[project.optional-dependencies.dev]`
 
@@ -707,98 +1191,6 @@ def browser():
         yield browser
         browser.close()
 ```
-
----
-
-## Phase 8: Logging & Monitoring
-
-**Goal:** Centralized log aggregation with Grafana Loki and dashboards for each service.
-
-### 8.1 Structured Logging to Loki (#14)
-
-**Current state:** `PrettyLogger` writes to stdout. `MemoryLogger` stores in-memory for tests.
-
-**Changes:**
-
-1. **New logger implementation:** `de_platform/services/logger/loki_logger.py`
-   - Implements `LoggingInterface`
-   - Sends structured JSON logs to Grafana Loki's HTTP push API (`/loki/api/v1/push`)
-   - Labels: `{service="normalizer", tenant_id="acme", environment="production"}`
-   - Log lines include full structured context: event_id, message_id, tenant_id, event_type, processing_stage, etc.
-   - Batches log entries and flushes periodically (every 1s or 100 entries) to avoid HTTP overhead
-
-2. **Register in registry:**
-   ```python
-   "log": {
-       "pretty": "de_platform.services.logger.pretty_logger.PrettyLogger",
-       "loki": "de_platform.services.logger.loki_logger.LokiLogger",
-   }
-   ```
-
-3. **Add `--log` CLI flag** to `runner.py` (like `--db`, `--cache`, etc.)
-
-4. **Enrich all log calls** across modules with contextual fields:
-   - normalizer: `tenant_id`, `event_type`, `event_id`, `message_id`, `primary_key`, `dedup_status`
-   - algos: `tenant_id`, `algorithm`, `severity`, `event_id`
-   - persistence: `tenant_id`, `table`, `batch_size`
-   - data_api: `endpoint`, `tenant_id`, `status_code`
-
-5. **Docker-compose:** Add Loki + Promtail services (or just Loki with direct HTTP push from the app)
-
-```yaml
-# Add to .devcontainer/docker-compose.yml
-loki:
-    image: grafana/loki:3.0.0
-    ports:
-        - "3100:3100"
-    command: -config.file=/etc/loki/local-config.yaml
-```
-
-Grafana already exists in docker-compose — add Loki as a datasource.
-
-### 8.2 Grafana Dashboards (#15)
-
-**Dashboard per service** provisioned as JSON files in `.devcontainer/grafana/dashboards/`:
-
-| Dashboard | Panels |
-|-----------|--------|
-| `normalizer.json` | Events/sec, error rate, dedup rate, avg processing time, by tenant |
-| `algos.json` | Alerts/min by algorithm, by severity, by tenant. Processing latency. |
-| `persistence.json` | Rows inserted/sec to ClickHouse, batch sizes, flush latency |
-| `data_api.json` | Request rate, latency percentiles, error rate, by endpoint |
-| `pipeline_overview.json` | End-to-end: ingestion → normalization → persistence → algos → alerts |
-
-**Metrics source:** Prometheus (already in docker-compose). Each module already has access to `MetricsInterface` — ensure all modules emit key metrics:
-
-- `events_processed_total` (counter, labels: service, event_type, tenant_id)
-- `events_errors_total` (counter, labels: service, error_type, tenant_id)
-- `processing_duration_seconds` (histogram, labels: service, operation)
-- `buffer_size` (gauge, labels: service, tenant_id)
-- `alerts_generated_total` (counter, labels: algorithm, severity, tenant_id)
-
-**Grafana provisioning:**
-
-```yaml
-# .devcontainer/grafana/provisioning/dashboards/dashboards.yml
-apiVersion: 1
-providers:
-  - name: 'default'
-    folder: 'DE Platform'
-    type: file
-    options:
-      path: /var/lib/grafana/dashboards
-```
-
-Mount dashboard JSON files into the Grafana container.
-
-### 8.3 Internal Log Viewer UI
-
-Since we're using Grafana Loki, the log viewer is Grafana's built-in Explore view:
-- Navigate to Grafana (already at `localhost:3000` in docker-compose)
-- Select Loki datasource
-- Use LogQL queries to filter: `{service="normalizer", tenant_id="acme"} |= "error"`
-
-No custom UI needed — Grafana handles this well. Add a link from the React UI's nav bar to `http://localhost:3000/explore` for convenience.
 
 ---
 
@@ -838,6 +1230,8 @@ tests/
         harness.py
         events.py
         scenarios.py                  # shared scenario functions (unchanged)
+        diagnostics.py                # from Phase 2
+        pytest_pipeline_report.py     # from Phase 2
 ```
 
 ### 9.2 Parallel E2E Tests (#19)
@@ -881,47 +1275,50 @@ Add e2e test scenarios for each new service:
 ## Execution Order & Dependencies
 
 ```
-Phase 1: Foundation (no dependencies)
+Phase 1: Foundation ✅ COMPLETE
     ├── 1.1 Consolidate Module/AsyncModule
     ├── 1.2 Crash resilience
     ├── 1.3 Integration tests
     └── 1.4 Test execution fixes
 
-Phase 2: Client Config (depends on: Phase 1)
-    ├── 2.1 Client config service
-    ├── 2.2 Config fields
-    └── 2.3 Redis pub-sub caching
+Phase 2: Observability & Test Debugging (depends on: Phase 1)
+    ├── 2.1 Module metrics emission
+    ├── 2.2 Structured logging with Loki
+    ├── 2.3 Grafana dashboards
+    ├── 2.4 Test metrics infrastructure
+    ├── 2.5 Enhanced timeout diagnostics
+    └── 2.6 Test report generation
 
-Phase 3: Auth (depends on: Phase 1)
-    ├── 3.1 Auth service
-    ├── 3.2 Auth middleware
-    └── 3.3 Tenant-scoped access
+Phase 3: Client Config (depends on: Phase 1)
+    ├── 3.1 Client config service
+    ├── 3.2 Config fields
+    └── 3.3 Redis pub-sub caching
 
-Phase 4: Algos Rewrite (depends on: Phase 2)
-    ├── 4.1 Algorithm interface redesign
-    ├── 4.2 Realtime execution (buffer)
-    ├── 4.3 Batch execution (ClickHouse)
-    └── 4.4 Algo tests
+Phase 4: Auth (depends on: Phase 1)
+    ├── 4.1 Auth service
+    ├── 4.2 Auth middleware
+    └── 4.3 Tenant-scoped access
 
-Phase 5: Data Audit (depends on: Phase 1)
-    ├── 5.1 Data audit service
-    └── 5.2 Pipeline integration
+Phase 5: Algos Rewrite (depends on: Phase 3)
+    ├── 5.1 Algorithm interface redesign
+    ├── 5.2 Realtime execution (buffer)
+    ├── 5.3 Batch execution (ClickHouse)
+    └── 5.4 Algo tests
 
-Phase 6: Task Scheduler (depends on: Phase 4 for batch_algos)
-    ├── 6.1 Task scheduler module
-    └── 6.2 Pre-configured tasks
+Phase 6: Data Audit (depends on: Phase 1)
+    ├── 6.1 Data audit service
+    └── 6.2 Pipeline integration
 
-Phase 7: React UI (depends on: Phase 2, 3, 5, 6)
-    ├── 7.1 UI application
-    ├── 7.2 API gateway
-    └── 7.3 Playwright tests
+Phase 7: Task Scheduler (depends on: Phase 5 for batch_algos)
+    ├── 7.1 Task scheduler module
+    └── 7.2 Pre-configured tasks
 
-Phase 8: Logging & Monitoring (can start after Phase 1)
-    ├── 8.1 Loki logging
-    ├── 8.2 Grafana dashboards
-    └── 8.3 Log viewer
+Phase 8: React UI (depends on: Phase 3, 4, 6, 7)
+    ├── 8.1 UI application
+    ├── 8.2 API gateway
+    └── 8.3 Playwright tests
 
-Phase 9: Test Reorg (depends on: Phase 7 for UI tests, otherwise Phase 1)
+Phase 9: Test Reorg (depends on: Phase 8 for UI tests, otherwise Phase 2)
     ├── 9.1 Reorganize tests
     ├── 9.2 Parallel tests
     └── 9.3 New feature tests
@@ -929,14 +1326,14 @@ Phase 9: Test Reorg (depends on: Phase 7 for UI tests, otherwise Phase 1)
 
 **Recommended implementation sequence:**
 
-1. **Phase 1** — Foundation (start here, unblocks everything)
-2. **Phase 2** — Client config (needed by algos rewrite and UI)
-3. **Phase 3** — Auth (can parallelize with Phase 2)
-4. **Phase 5** — Data audit (independent, can parallelize with 2/3)
-5. **Phase 8** — Logging (independent, can start anytime after Phase 1)
-6. **Phase 4** — Algos rewrite (needs Phase 2 for config)
-7. **Phase 6** — Task scheduler (needs Phase 4 for batch algos)
-8. **Phase 7** — UI (needs 2, 3, 5, 6 — do this last or build incrementally as services are ready)
+1. **Phase 1** — Foundation ✅ COMPLETE
+2. **Phase 2** — Observability & Test Debugging (unblocks debuggable E2E for all future phases)
+3. **Phase 3** — Client config (needed by algos rewrite and UI)
+4. **Phase 4** — Auth (can parallelize with Phase 3)
+5. **Phase 6** — Data audit (independent, can parallelize with 3/4)
+6. **Phase 5** — Algos rewrite (needs Phase 3 for config)
+7. **Phase 7** — Task scheduler (needs Phase 5 for batch algos)
+8. **Phase 8** — UI (needs 3, 4, 6, 7 — do this last or build incrementally as services are ready)
 9. **Phase 9** — Test reorg (ongoing, finalize after all features)
 
 ---

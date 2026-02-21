@@ -26,6 +26,7 @@ from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,7 +99,8 @@ async def _setup() -> tuple[NormalizerModule, MemoryQueue, MemoryCache, MemoryDa
     config = ModuleConfig({})
 
     module = NormalizerModule(
-        config=config, logger=logger, mq=mq, cache=cache, db=db, lifecycle=lifecycle
+        config=config, logger=logger, mq=mq, cache=cache, db=db, lifecycle=lifecycle,
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     return module, mq, cache, db

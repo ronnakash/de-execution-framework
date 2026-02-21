@@ -15,6 +15,7 @@ from de_platform.pipeline.topics import (
 from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ async def _run(
     if mq is None:
         mq = MemoryQueue()
     config = ModuleConfig({"file-path": file_path, "event-type": event_type})
-    module = FileProcessorModule(config, LoggerFactory(), fs, mq)
+    module = FileProcessorModule(config, LoggerFactory(), fs, mq, NoopMetrics())
     return await module.run(), mq
 
 
@@ -157,7 +158,7 @@ async def test_invalid_event_type_raises_on_validate():
     fs.write("x.json", json.dumps([VALID_ORDER]).encode())
     module = FileProcessorModule(
         ModuleConfig({"file-path": "x.json", "event-type": "banana"}),
-        LoggerFactory(), fs, MemoryQueue(),
+        LoggerFactory(), fs, MemoryQueue(), NoopMetrics(),
     )
     await module.initialize()
     with pytest.raises(ValueError, match="event-type"):
@@ -169,7 +170,7 @@ async def test_missing_file_path_raises():
 
     module = FileProcessorModule(
         ModuleConfig({"event-type": "order"}),
-        LoggerFactory(), MemoryFileSystem(), MemoryQueue(),
+        LoggerFactory(), MemoryFileSystem(), MemoryQueue(), NoopMetrics(),
     )
     await module.initialize()
     with pytest.raises(ValueError, match="file-path"):

@@ -335,6 +335,14 @@ def _build_container(
             if hasattr(instance, "health_check"):
                 hs.register_check(flag_name, instance.health_check)
 
+    # 8. Ensure MetricsInterface is always available (NoopMetrics as default)
+    from de_platform.services.metrics.interface import MetricsInterface
+
+    if not container.has(MetricsInterface):
+        from de_platform.services.metrics.noop_metrics import NoopMetrics
+
+        container.register_instance(MetricsInterface, NoopMetrics())
+
     return container
 
 

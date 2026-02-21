@@ -13,6 +13,7 @@ from de_platform.pipeline.topics import (
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ def _build_module(mq: MemoryQueue, config_overrides: dict | None = None):
     config = ModuleConfig(config_overrides or {})
     logger = LoggerFactory()
     lifecycle = LifecycleManager()
-    module = KafkaStarterModule(config, logger, mq, lifecycle)
+    module = KafkaStarterModule(config, logger, mq, lifecycle, NoopMetrics())
     return module, lifecycle
 
 

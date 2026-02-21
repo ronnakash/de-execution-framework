@@ -12,6 +12,7 @@ from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 async def _make_app() -> DataApiModule:
@@ -25,6 +26,7 @@ async def _make_app() -> DataApiModule:
         mq=MemoryQueue(),
         db_factory=db_factory,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     return module

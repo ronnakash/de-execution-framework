@@ -41,6 +41,9 @@ data_platform_phase2_spec.md
 .envfiles/
 !.envfiles/devcontainer.env
 
+# Test reports
+reports/
+
 # Distribution / packaging
 dist/
 build/

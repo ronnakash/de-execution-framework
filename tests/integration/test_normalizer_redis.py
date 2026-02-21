@@ -21,6 +21,7 @@ from de_platform.pipeline.topics import (
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 pytestmark = pytest.mark.real_infra
@@ -55,6 +56,7 @@ async def test_normalizer_dedup_with_redis(redis_cache, warehouse_db):
         cache=redis_cache,
         db=warehouse_db,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 
@@ -111,6 +113,7 @@ async def test_normalizer_enrichment_with_redis_cache(redis_cache, warehouse_db)
         cache=redis_cache,
         db=warehouse_db,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 

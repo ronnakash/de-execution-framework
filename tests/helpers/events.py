@@ -85,16 +85,16 @@ def make_transaction(
     }
 
 
-def make_invalid(event_type: str) -> dict[str, Any]:
+def make_invalid(event_type: str, tenant_id: str = "acme") -> dict[str, Any]:
     """Return an event with an empty id — fails the non_empty_str validation check."""
-    evt = EVENT_FACTORY[event_type]()
+    evt = EVENT_FACTORY[event_type](tenant_id=tenant_id)
     evt["id"] = ""
     return evt
 
 
-def make_multi_invalid(event_type: str) -> dict[str, Any]:
+def make_multi_invalid(event_type: str, tenant_id: str = "acme") -> dict[str, Any]:
     """Return an event with multiple validation failures (empty id + bad currency)."""
-    evt = EVENT_FACTORY[event_type]()
+    evt = EVENT_FACTORY[event_type](tenant_id=tenant_id)
     evt["id"] = ""
     evt["currency"] = "x"
     return evt

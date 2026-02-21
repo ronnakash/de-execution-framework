@@ -57,7 +57,7 @@ Every external dependency is an ABC in `de_platform/services/<name>/interface.py
 | `CacheInterface` | `MemoryCache` | `RedisCache` |
 | `MessageQueueInterface` | `MemoryQueue` | `KafkaQueue` |
 | `MetricsInterface` | `MemoryMetrics` | `PrometheusMetrics`, `NoopMetrics` |
-| `LoggingInterface` | `MemoryLogger` (via `LoggerFactory`) | `PrettyLogger` |
+| `LoggingInterface` | `MemoryLogger` (via `LoggerFactory`) | `PrettyLogger`, `LokiLogger` |
 | `SecretsInterface` | — | `EnvSecrets` |
 
 **`MemoryDatabase` limitation:** Its SQL parser only handles `SELECT * FROM <table> WHERE col = $1` (single WHERE clause, `SELECT *` only). Multi-column WHERE queries or `SELECT <col>` will silently return `None`. When unit-testing code that does complex DB queries (e.g., `CurrencyConverter`), pre-populate the cache instead of the DB.
@@ -115,3 +115,13 @@ Fraud detection pipeline built on top of the framework:
 **Integration tests** (`conftest.py` root fixtures): `warehouse_db` fixture connects to docker-compose Postgres, runs real migrations, then yields a connected `PostgresDatabase`. Skipped automatically when asyncpg is not installed. Marked with `-k "postgres"`.
 
 **DEVCONTAINER detection:** When `DEVCONTAINER=1` is set (automatic in devcontainer), test fixtures use Docker DNS names (postgres, redis, kafka:29092). Otherwise they default to localhost.
+
+### Observability
+
+**Metrics:** All pipeline modules emit metrics via `MetricsInterface` (counter, gauge, histogram). `NoopMetrics` is registered as default when `--metrics` is not passed. Standard metric names: `events_received_total`, `events_processed_total`, `duplicates_detected_total`, `rows_flushed_total`, `alerts_generated_total`, `events_ingested_total`, `events_errors_total`, `http_requests_total`.
+
+**Structured logging:** All modules use `LoggerFactory` → `LoggingInterface` with structured context (tenant_id, event_type, event_id, etc.). `LokiLogger` sends logs to Grafana Loki. `PrettyLogger` for local dev. `MemoryLogger` for tests.
+
+**Grafana dashboards:** 6 provisioned dashboards in `grafana/dashboards/`: pipeline_overview, normalizer, algos, persistence, data_api, test_runs. Datasources: Prometheus + Loki.
+
+**Test diagnostics:** `TestDiagnostics` class in `tests/helpers/diagnostics.py` takes `PipelineSnapshot` (Kafka watermarks, DB row counts, module health, metrics). All harness timeout paths include snapshots in error messages. Pipeline report plugin (`tests/helpers/pytest_pipeline_report.py`) generates JSON + HTML reports in `reports/` after each test session.

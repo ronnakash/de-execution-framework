@@ -16,6 +16,7 @@ from de_platform.pipeline.topics import ALERTS, TRADES_ALGOS
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 pytestmark = pytest.mark.real_infra
@@ -60,6 +61,7 @@ async def test_algos_persists_large_notional_alert_to_postgres(alerts_db, redis_
         db=alerts_db,
         cache=redis_cache,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 
@@ -91,6 +93,7 @@ async def test_algos_no_alert_for_small_trade(alerts_db, redis_cache):
         db=alerts_db,
         cache=redis_cache,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 

@@ -32,6 +32,7 @@ from de_platform.services.filesystem.interface import FileSystemInterface
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
+from de_platform.services.metrics.interface import MetricsInterface
 
 _TOPIC_MAP: dict[str, str] = {
     "order": TRADE_NORMALIZATION,
@@ -49,11 +50,13 @@ class FileProcessorModule(Module):
         logger: LoggerFactory,
         fs: FileSystemInterface,
         mq: MessageQueueInterface,
+        metrics: MetricsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
         self.fs = fs
         self.mq = mq
+        self.metrics = metrics
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
@@ -62,8 +65,14 @@ class FileProcessorModule(Module):
 
     async def validate(self) -> None:
         if not self.file_path:
+            self.log.error("Validation failed: file-path is required", module="file_processor")
             raise ValueError("file-path is required")
         if self.event_type not in _TOPIC_MAP:
+            self.log.error(
+                "Validation failed: invalid event-type",
+                module="file_processor",
+                event_type=self.event_type,
+            )
             raise ValueError(
                 f"event-type must be one of {list(_TOPIC_MAP)}, got {self.event_type!r}"
             )
@@ -73,7 +82,11 @@ class FileProcessorModule(Module):
         events = _parse_events(raw_bytes)
 
         if not events:
-            self.log.info("No events found in file", path=self.file_path)
+            self.log.info(
+                "No events found in file",
+                file_path=self.file_path,
+                event_type=self.event_type,
+            )
             return 0
 
         valid, errors = validate_events(self.event_type, events)
@@ -91,12 +104,15 @@ class FileProcessorModule(Module):
             err_msg = error_to_dict(raw_event, self.event_type, event_errors)
             self.mq.publish(NORMALIZATION_ERRORS, err_msg)
 
+        self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "file_processor", "event_type": self.event_type, "method": "file"})
+        if errors:
+            self.metrics.counter("events_errors_total", value=float(len(errors)), tags={"service": "file_processor", "event_type": self.event_type})
         self.log.info(
             "File processed",
-            path=self.file_path,
+            file_path=self.file_path,
             event_type=self.event_type,
-            accepted=len(valid),
-            rejected=len(errors),
+            valid_count=len(valid),
+            error_count=len(errors),
         )
         return 0
 

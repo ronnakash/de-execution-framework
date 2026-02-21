@@ -44,6 +44,10 @@ from de_platform.pipeline.topics import (
 from de_platform.services.database.factory import DatabaseFactory
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
+from de_platform.services.metrics.memory_metrics import MemoryMetrics
+from de_platform.services.metrics.noop_metrics import NoopMetrics
+
+from tests.helpers.diagnostics import TestDiagnostics
 
 from tests.helpers.events import (
     ALGOS_TOPIC,
@@ -78,13 +82,18 @@ async def poll_until(
     predicate: Callable[[], bool],
     timeout: float = 30.0,
     interval: float = 0.1,
+    on_timeout: Callable[[], str] | None = None,
 ) -> None:
     """Repeatedly call predicate() until it returns truthy or timeout expires."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while not predicate():
         if loop.time() > deadline:
-            raise TimeoutError("poll_until: condition not met within timeout")
+            detail = on_timeout() if on_timeout else ""
+            msg = f"poll_until: condition not met within {timeout}s"
+            if detail:
+                msg = f"{msg}\n\n{detail}"
+            raise TimeoutError(msg)
         await asyncio.sleep(interval)
 
 
@@ -113,6 +122,8 @@ async def _wait_for_http(url: str, timeout: float = 15.0) -> None:
 
 
 class PipelineHarness(Protocol):
+    tenant_id: str
+
     async def ingest(
         self, method: str, event_type: str, events: list[dict]
     ) -> None: ...
@@ -156,6 +167,7 @@ class MemoryHarness:
         from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
         from de_platform.services.message_queue.memory_queue import MemoryQueue
 
+        self.tenant_id: str = "acme"
         self.mq = MemoryQueue()
         self.cache = MemoryCache()
         self.fs = MemoryFileSystem()
@@ -172,9 +184,11 @@ class MemoryHarness:
         self.cache.set("currency_rate:GBP_USD", 1.25)
 
         self._algos_config = algos_config or {}
+        self._metrics = MemoryMetrics()
         self.normalizer: NormalizerModule | None = None
         self.persistence: PersistenceModule | None = None
         self.algos: AlgosModule | None = None
+        self.diagnostics: TestDiagnostics | None = None
 
     async def _ensure_modules(self) -> None:
         if self.normalizer is not None:
@@ -189,6 +203,7 @@ class MemoryHarness:
             cache=self.cache,
             db=self._currency_db,
             lifecycle=LifecycleManager(),
+            metrics=self._metrics,
         )
         await self.normalizer.initialize()
 
@@ -199,6 +214,7 @@ class MemoryHarness:
             db=self.clickhouse_db,
             fs=self.fs,
             lifecycle=LifecycleManager(),
+            metrics=self._metrics,
         )
         await self.persistence.initialize()
 
@@ -209,8 +225,16 @@ class MemoryHarness:
             db=self.alerts_db,
             cache=self.cache,
             lifecycle=LifecycleManager(),
+            metrics=self._metrics,
         )
         await self.algos.initialize()
+
+        self.diagnostics = TestDiagnostics(
+            memory_metrics=self._metrics,
+            memory_queue=self.mq,
+            clickhouse_db=self.clickhouse_db,
+            postgres_db=self.alerts_db,
+        )
 
     # ── Pipeline step helpers ────────────────────────────────────────────
 
@@ -279,13 +303,18 @@ class MemoryHarness:
         else:
             raise ValueError(f"Unknown method: {method!r}")
 
+    def _filter_by_tenant(self, rows: list[dict]) -> list[dict]:
+        return [r for r in rows if r.get("tenant_id") == self.tenant_id]
+
     async def wait_for_rows(
         self, table: str, expected: int, timeout: float = 30.0
     ) -> list[dict]:
         # Drive normalizer → persistence for all topics
         self._drain_normalizer()
         self._drain_all_into_persistence()
-        return self.clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        return self._filter_by_tenant(
+            self.clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
 
     async def wait_for_no_new_rows(
         self, table: str, known: int, timeout: float = 3.0
@@ -293,7 +322,9 @@ class MemoryHarness:
         # Drive one more normalizer cycle to make sure nothing slips through
         self._drain_normalizer()
         self._drain_all_into_persistence()
-        rows = self.clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        rows = self._filter_by_tenant(
+            self.clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
         if len(rows) != known:
             raise AssertionError(
                 f"Expected {known} rows in {table}, got {len(rows)}"
@@ -303,7 +334,9 @@ class MemoryHarness:
         # Drive pipeline first to make sure algos have processed everything
         self._drain_normalizer()
         await self._drain_all_algos_topics()
-        return self.alerts_db.fetch_all("SELECT * FROM alerts")
+        return self._filter_by_tenant(
+            self.alerts_db.fetch_all("SELECT * FROM alerts")
+        )
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 30.0
@@ -311,7 +344,9 @@ class MemoryHarness:
         # Drive normalizer → algos
         self._drain_normalizer()
         await self._drain_all_algos_topics()
-        return self.alerts_db.fetch_all("SELECT * FROM alerts")
+        return self._filter_by_tenant(
+            self.alerts_db.fetch_all("SELECT * FROM alerts")
+        )
 
     async def query_api(
         self, endpoint: str, params: dict[str, str]
@@ -325,6 +360,7 @@ class MemoryHarness:
             mq=self.mq,
             db_factory=db_factory,
             lifecycle=LifecycleManager(),
+            metrics=NoopMetrics(),
         )
         await api.initialize()
         app = api._create_app()
@@ -364,6 +400,7 @@ class ContainerHarness:
     ) -> None:
         self._infra = infra
         self._algos_config = algos_config or {}
+        self.tenant_id: str = f"INTEGRATION_CLIENT_{uuid.uuid4().hex[:12]}"
         # Populated in __aenter__
         self._clickhouse_db: Any = None
         self._alerts_db: Any = None
@@ -375,6 +412,7 @@ class ContainerHarness:
         self._tasks: list[asyncio.Task] = []
         self._lifecycles: list[LifecycleManager] = []
         self._mqs: list[Any] = []
+        self.diagnostics: TestDiagnostics | None = None
 
     async def _setup(self) -> None:
         from de_platform.modules.kafka_starter.main import KafkaStarterModule
@@ -453,12 +491,14 @@ class ContainerHarness:
                 logger=logger,
                 mq=mq_rest,
                 lifecycle=lc_rest,
+                metrics=NoopMetrics(),
             ),
             KafkaStarterModule(
                 config=ModuleConfig({}),
                 logger=logger,
                 mq=mq_kafka,
                 lifecycle=lc_kafka,
+                metrics=NoopMetrics(),
             ),
             NormalizerModule(
                 config=ModuleConfig({}),
@@ -467,6 +507,7 @@ class ContainerHarness:
                 cache=cache,
                 db=warehouse_db,
                 lifecycle=lc_norm,
+                metrics=NoopMetrics(),
             ),
             PersistenceModule(
                 config=ModuleConfig({"flush-threshold": 1, "flush-interval": 0}),
@@ -475,6 +516,7 @@ class ContainerHarness:
                 db=ch_db,
                 fs=fs,
                 lifecycle=lc_pers,
+                metrics=NoopMetrics(),
             ),
             AlgosModule(
                 config=ModuleConfig(self._algos_config),
@@ -483,6 +525,7 @@ class ContainerHarness:
                 db=alerts_db,
                 cache=cache,
                 lifecycle=lc_algos,
+                metrics=NoopMetrics(),
             ),
             DataApiModule(
                 config=ModuleConfig({"port": self.api_port}),
@@ -490,6 +533,7 @@ class ContainerHarness:
                 mq=mq_api,
                 db_factory=api_db_factory,
                 lifecycle=lc_api,
+                metrics=NoopMetrics(),
             ),
         ]
 
@@ -518,6 +562,15 @@ class ContainerHarness:
         producer_mq.connect()
         self._kafka_producer = producer_mq
         self._mqs.append(producer_mq)
+
+        # Diagnostics for test debugging
+        self.diagnostics = TestDiagnostics(
+            kafka_bootstrap=self._bootstrap_servers,
+            clickhouse_db=self._clickhouse_db,
+            postgres_db=self._alerts_db,
+            tasks=self._tasks,
+            task_names=names,
+        )
 
     async def _teardown(self) -> None:
         for lc in self._lifecycles:
@@ -564,33 +617,56 @@ class ContainerHarness:
         else:
             raise ValueError(f"Unknown method: {method!r}")
 
+    def _snapshot_text(self) -> str:
+        """Take a diagnostic snapshot and format it for error messages."""
+        if self.diagnostics is None:
+            return ""
+        try:
+            snap = self.diagnostics.snapshot()
+            return TestDiagnostics.format_snapshot(snap)
+        except Exception as e:
+            return f"(diagnostics failed: {e})"
+
+    def _filter_by_tenant(self, rows: list[dict]) -> list[dict]:
+        return [r for r in rows if r.get("tenant_id") == self.tenant_id]
+
     async def wait_for_rows(
         self, table: str, expected: int, timeout: float = 60.0
     ) -> list[dict]:
         def _check() -> bool:
             self._check_tasks_alive()
+            rows = self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+            return len(self._filter_by_tenant(rows)) >= expected
+
+        def _on_timeout() -> str:
             return (
-                len(self._clickhouse_db.fetch_all(f"SELECT * FROM {table}"))
-                >= expected
+                f"wait_for_rows('{table}', expected={expected}) "
+                f"timed out after {timeout}s\n\n{self._snapshot_text()}"
             )
 
-        await poll_until(_check, timeout=timeout)
-        return self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        await poll_until(_check, timeout=timeout, on_timeout=_on_timeout)
+        return self._filter_by_tenant(
+            self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
 
     async def wait_for_no_new_rows(
         self, table: str, known: int, timeout: float = 5.0
     ) -> None:
         await asyncio.sleep(timeout)
         self._check_tasks_alive()
-        rows = self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        rows = self._filter_by_tenant(
+            self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
         if len(rows) != known:
             raise AssertionError(
-                f"Expected {known} rows in {table} to remain unchanged, got {len(rows)}"
+                f"Expected {known} rows in {table} to remain unchanged, "
+                f"got {len(rows)}\n\n{self._snapshot_text()}"
             )
 
     async def fetch_alerts(self) -> list[dict]:
         self._check_tasks_alive()
-        return await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+        rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+        return self._filter_by_tenant(rows)
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 60.0
@@ -600,11 +676,13 @@ class ContainerHarness:
         while True:
             self._check_tasks_alive()
             rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+            rows = self._filter_by_tenant(rows)
             if any(predicate(r) for r in rows):
                 return rows
             if loop.time() > deadline:
                 raise TimeoutError(
-                    "wait_for_alert: condition not met within timeout"
+                    f"wait_for_alert: condition not met within {timeout}s"
+                    f"\n\n{self._snapshot_text()}"
                 )
             await asyncio.sleep(0.1)
 
@@ -678,6 +756,7 @@ class SubprocessHarness:
     ) -> None:
         self._infra = infra
         self._algos_extra = algos_extra or []
+        self.tenant_id: str = f"INTEGRATION_CLIENT_{uuid.uuid4().hex[:12]}"
         self._procs: dict[str, subprocess.Popen] = {}
         self.rest_port: int = 0
         self.api_port: int = 0
@@ -685,6 +764,7 @@ class SubprocessHarness:
         self._alerts_db: Any = None
         self._kafka_producer: Any = None
         self._minio_fs: Any = None
+        self.diagnostics: TestDiagnostics | None = None
 
     async def _setup(self) -> None:
         from de_platform.services.database.clickhouse_database import ClickHouseDatabase
@@ -800,6 +880,14 @@ class SubprocessHarness:
 
         self._minio_fs = MinioFileSystem(secrets=secrets)
 
+        # Diagnostics for test debugging
+        self.diagnostics = TestDiagnostics(
+            kafka_bootstrap=infra.kafka_bootstrap_servers,
+            clickhouse_db=self._clickhouse_db,
+            postgres_db=self._alerts_db,
+            processes=self._procs,
+        )
+
     async def _teardown(self) -> None:
         # SIGTERM all subprocesses
         for proc in self._procs.values():
@@ -838,30 +926,56 @@ class SubprocessHarness:
         else:
             raise ValueError(f"Unknown method: {method!r}")
 
+    def _snapshot_text(self) -> str:
+        """Take a diagnostic snapshot and format it for error messages."""
+        if self.diagnostics is None:
+            return ""
+        try:
+            snap = self.diagnostics.snapshot()
+            return TestDiagnostics.format_snapshot(snap)
+        except Exception as e:
+            return f"(diagnostics failed: {e})"
+
+    def _filter_by_tenant(self, rows: list[dict]) -> list[dict]:
+        return [r for r in rows if r.get("tenant_id") == self.tenant_id]
+
     async def wait_for_rows(
         self, table: str, expected: int, timeout: float = 120.0
     ) -> list[dict]:
-        await poll_until(
-            lambda: len(
-                self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        def _on_timeout() -> str:
+            return (
+                f"wait_for_rows('{table}', expected={expected}) "
+                f"timed out after {timeout}s\n\n{self._snapshot_text()}"
             )
+
+        await poll_until(
+            lambda: len(self._filter_by_tenant(
+                self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+            ))
             >= expected,
             timeout=timeout,
+            on_timeout=_on_timeout,
         )
-        return self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        return self._filter_by_tenant(
+            self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
 
     async def wait_for_no_new_rows(
         self, table: str, known: int, timeout: float = 5.0
     ) -> None:
         await asyncio.sleep(timeout)
-        rows = self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        rows = self._filter_by_tenant(
+            self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        )
         if len(rows) != known:
             raise AssertionError(
-                f"Expected {known} rows in {table} to remain unchanged, got {len(rows)}"
+                f"Expected {known} rows in {table} to remain unchanged, "
+                f"got {len(rows)}\n\n{self._snapshot_text()}"
             )
 
     async def fetch_alerts(self) -> list[dict]:
-        return await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+        rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+        return self._filter_by_tenant(rows)
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 60.0
@@ -870,11 +984,13 @@ class SubprocessHarness:
         deadline = loop.time() + timeout
         while True:
             rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+            rows = self._filter_by_tenant(rows)
             if any(predicate(r) for r in rows):
                 return rows
             if loop.time() > deadline:
                 raise TimeoutError(
-                    "wait_for_alert: condition not met within timeout"
+                    f"wait_for_alert: condition not met within {timeout}s"
+                    f"\n\n{self._snapshot_text()}"
                 )
             await asyncio.sleep(0.1)
 

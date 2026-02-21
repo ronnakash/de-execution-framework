@@ -75,11 +75,14 @@ async def ingest_rest_http(port: int, event_type: str, events: list[dict]) -> No
 
 async def ingest_kafka_starter(mq: Any, event_type: str, events: list[dict]) -> None:
     """Ingest events by calling KafkaStarterModule._process_message directly."""
+    from de_platform.services.metrics.noop_metrics import NoopMetrics
+
     starter = KafkaStarterModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await starter.initialize()
     topic = NORM_TOPIC[event_type]
@@ -104,11 +107,14 @@ async def ingest_files_memory(
     path = f"ingest/{event_type}/{uuid.uuid4().hex[:8]}.jsonl"
     content = "\n".join(json.dumps(e) for e in events).encode()
     fs.write(path, content)
+    from de_platform.services.metrics.noop_metrics import NoopMetrics
+
     module = FileProcessorModule(
         config=ModuleConfig({"file-path": path, "event-type": event_type}),
         logger=LoggerFactory(default_impl="memory"),
         fs=fs,
         mq=mq,
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     await module.validate()
@@ -122,11 +128,14 @@ async def ingest_files_minio_inline(
     path = f"ingest/{event_type}/{uuid.uuid4().hex[:8]}.jsonl"
     content = "\n".join(json.dumps(e) for e in events).encode()
     minio_fs.write(path, content)
+    from de_platform.services.metrics.noop_metrics import NoopMetrics
+
     module = FileProcessorModule(
         config=ModuleConfig({"file-path": path, "event-type": event_type}),
         logger=LoggerFactory(default_impl="memory"),
         fs=minio_fs,
         mq=mq,
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     await module.validate()
@@ -154,11 +163,14 @@ async def ingest_files_minio_with_kafka(
     })
     fp_mq = KafkaQueue(fp_secrets)
     fp_mq.connect()
+    from de_platform.services.metrics.noop_metrics import NoopMetrics
+
     fp = FileProcessorModule(
         config=ModuleConfig({"file-path": path, "event-type": event_type}),
         logger=LoggerFactory(default_impl="memory"),
         fs=minio_fs,
         mq=fp_mq,
+        metrics=NoopMetrics(),
     )
     await fp.run()
     fp_mq.disconnect()

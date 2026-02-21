@@ -23,6 +23,7 @@ from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -63,7 +64,8 @@ async def _setup_module() -> tuple[AlgosModule, MemoryQueue, MemoryDatabase]:
     config = ModuleConfig({})
 
     module = AlgosModule(
-        config=config, logger=logger, mq=mq, db=db, cache=cache, lifecycle=lifecycle
+        config=config, logger=logger, mq=mq, db=db, cache=cache, lifecycle=lifecycle,
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     return module, mq, db

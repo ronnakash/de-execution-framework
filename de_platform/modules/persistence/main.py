@@ -37,6 +37,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
+from de_platform.services.metrics.interface import MetricsInterface
 
 _TOPIC_TABLE_MAP: list[tuple[str, str]] = [
     (ORDERS_PERSISTENCE, "orders"),
@@ -58,6 +59,7 @@ class PersistenceModule(Module):
         db: DatabaseInterface,
         fs: FileSystemInterface,
         lifecycle: LifecycleManager,
+        metrics: MetricsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -65,6 +67,7 @@ class PersistenceModule(Module):
         self.db = db
         self.fs = fs
         self.lifecycle = lifecycle
+        self.metrics = metrics
         self.flush_interval: int = 60
         self.flush_threshold: int = 100_000
         self.buffer: TenantBuffer | None = None
@@ -85,15 +88,24 @@ class PersistenceModule(Module):
 
     async def execute(self) -> int:
         assert self.buffer is not None
-        self.log.info("Persistence running")
+        self.log.info("Persistence running", module="persistence")
         while not self.lifecycle.is_shutting_down:
             try:
                 for topic, table in _TOPIC_TABLE_MAP:
                     msg = self.mq.consume_one(topic)
                     if msg:
+                        self.metrics.counter("events_received_total", tags={"service": "persistence", "topic": topic})
                         tenant_id = msg.get("tenant_id", "unknown")
                         key = BufferKey(tenant_id=tenant_id, table=table)
                         self.buffer.append(key, msg)
+                        buf_size = len(self.buffer._buffers.get(key, []))
+                        self.metrics.gauge("buffer_size", float(buf_size), tags={"service": "persistence", "table": table})
+                        self.log.debug(
+                            "Event buffered",
+                            tenant_id=tenant_id,
+                            table=table,
+                            batch_size=buf_size,
+                        )
                         if self.buffer.should_flush(key):
                             self._flush(key)
                 # Time-based flush check for all buffered keys
@@ -101,7 +113,7 @@ class PersistenceModule(Module):
                     if self.buffer.should_flush(key):
                         self._flush(key)
             except Exception as exc:
-                self.log.error("Processing error", error=str(exc))
+                self.log.error("Processing error", module="persistence", error=str(exc))
             await asyncio.sleep(0.01)
         return 0
 
@@ -118,11 +130,13 @@ class PersistenceModule(Module):
         path = f"{key.tenant_id}/{key.table}/{uuid.uuid4().hex[:12]}.jsonl"
         data = "\n".join(json.dumps(r) for r in rows).encode()
         self.fs.write(path, data)
+        self.metrics.counter("rows_flushed_total", value=float(len(rows)), tags={"service": "persistence", "table": key.table})
+        self.metrics.gauge("buffer_size", 0.0, tags={"service": "persistence", "table": key.table})
         self.log.info(
             "Flushed",
-            tenant=key.tenant_id,
+            tenant_id=key.tenant_id,
             table=key.table,
-            count=len(rows),
+            batch_size=len(rows),
             path=path,
         )
 
@@ -133,7 +147,7 @@ class PersistenceModule(Module):
         for key, rows in self.buffer.drain_all().items():
             if rows:
                 self._flush_rows(key, rows)
-        self.log.info("All buffers flushed on shutdown")
+        self.log.info("All buffers flushed on shutdown", module="persistence")
 
 
 module_class = PersistenceModule

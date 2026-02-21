@@ -16,6 +16,7 @@ from de_platform.modules.persistence.buffer import BufferKey
 from de_platform.modules.persistence.main import PersistenceModule
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 pytestmark = pytest.mark.real_infra
@@ -65,6 +66,7 @@ async def test_persistence_flush_orders_to_clickhouse(clickhouse_db, kafka_mq):
         db=clickhouse_db,
         fs=MemoryFileSystem(),
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 
@@ -94,6 +96,7 @@ async def test_persistence_flush_errors_to_clickhouse(clickhouse_db, kafka_mq):
         db=clickhouse_db,
         fs=MemoryFileSystem(),
         lifecycle=LifecycleManager(),
+        metrics=NoopMetrics(),
     )
     await module.initialize()
 

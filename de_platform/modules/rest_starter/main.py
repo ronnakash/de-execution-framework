@@ -42,6 +42,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
+from de_platform.services.metrics.interface import MetricsInterface
 
 # Maps endpoint event_type → normalization topic
 _TOPIC_MAP: dict[str, str] = {
@@ -60,11 +61,13 @@ class RestStarterModule(Module):
         logger: LoggerFactory,
         mq: MessageQueueInterface,
         lifecycle: LifecycleManager,
+        metrics: MetricsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
         self.mq = mq
         self.lifecycle = lifecycle
+        self.metrics = metrics
         self._runner: web.AppRunner | None = None
 
     async def initialize(self) -> None:
@@ -83,7 +86,7 @@ class RestStarterModule(Module):
         site = web.TCPSite(self._runner, "0.0.0.0", self.port)
         await site.start()
 
-        self.log.info("REST Starter listening", port=self.port)
+        self.log.info("REST Starter listening", module="rest_starter", port=self.port)
         self.lifecycle.on_shutdown(self._stop_server)
 
         while not self.lifecycle.is_shutting_down:
@@ -119,10 +122,12 @@ class RestStarterModule(Module):
         try:
             body = await request.json()
         except Exception:
+            self.log.warn("Invalid JSON body received", event_type=event_type, status_code=400)
             return web.json_response({"error": "Invalid JSON body"}, status=400)
 
         events: list[dict[str, Any]] = body.get("events", [])
         if not isinstance(events, list):
+            self.log.warn("'events' field is not a list", event_type=event_type, status_code=400)
             return web.json_response({"error": "'events' must be a list"}, status=400)
 
         valid, errors = validate_events(event_type, events)
@@ -142,6 +147,9 @@ class RestStarterModule(Module):
         # Deduplicate error indices for response
         rejected_indices = {e.event_index for e in errors}
 
+        self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "rest_starter", "event_type": event_type, "method": "rest"})
+        if rejected_indices:
+            self.metrics.counter("events_errors_total", value=float(len(rejected_indices)), tags={"service": "rest_starter", "event_type": event_type})
         self.log.info(
             "Ingested events",
             event_type=event_type,

@@ -20,6 +20,7 @@ from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -47,7 +48,8 @@ async def _setup() -> tuple[PersistenceModule, MemoryQueue, MemoryDatabase, Memo
     config = ModuleConfig({"flush-interval": 60, "flush-threshold": 100_000})
 
     module = PersistenceModule(
-        config=config, logger=logger, mq=mq, db=db, fs=fs, lifecycle=lifecycle
+        config=config, logger=logger, mq=mq, db=db, fs=fs, lifecycle=lifecycle,
+        metrics=NoopMetrics(),
     )
     await module.initialize()
     return module, mq, db, fs

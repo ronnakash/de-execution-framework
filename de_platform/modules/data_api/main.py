@@ -55,6 +55,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
+from de_platform.services.metrics.interface import MetricsInterface
 
 
 class DataApiModule(Module):
@@ -67,12 +68,14 @@ class DataApiModule(Module):
         mq: MessageQueueInterface,
         db_factory: DatabaseFactory,
         lifecycle: LifecycleManager,
+        metrics: MetricsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
         self.mq = mq
         self.db_factory = db_factory
         self.lifecycle = lifecycle
+        self.metrics = metrics
         self._runner: web.AppRunner | None = None
 
     async def initialize(self) -> None:
@@ -93,13 +96,13 @@ class DataApiModule(Module):
         await self._runner.setup()
         site = web.TCPSite(self._runner, "0.0.0.0", int(self.port))
         await site.start()
-        self.log.info("Data API listening", port=self.port)
+        self.log.info("Data API listening", module="data_api", port=self.port)
 
         while not self.lifecycle.is_shutting_down:
             try:
                 await self._consume_alerts()
             except Exception as exc:
-                self.log.error("Processing error", error=str(exc))
+                self.log.error("Processing error", module="data_api", error=str(exc))
             await asyncio.sleep(0.01)
 
         return 0
@@ -119,10 +122,20 @@ class DataApiModule(Module):
                 msg["created_at"] = dt.replace(tzinfo=None)
             try:
                 await self.alerts_db.insert_one_async("alerts", msg)
-                self.log.info("Alert persisted", alert_id=msg.get("alert_id", ""))
+                self.metrics.counter("events_received_total", tags={"service": "data_api", "topic": "alerts"})
+                self.log.info(
+                    "Alert persisted",
+                    alert_id=msg.get("alert_id", ""),
+                    tenant_id=msg.get("tenant_id", ""),
+                    endpoint="kafka_consumer",
+                )
             except Exception:
                 # Alert may already exist (inserted by algos module directly)
-                self.log.debug("Alert insert skipped (duplicate)", alert_id=msg.get("alert_id", ""))
+                self.log.debug(
+                    "Alert insert skipped (duplicate)",
+                    alert_id=msg.get("alert_id", ""),
+                    tenant_id=msg.get("tenant_id", ""),
+                )
 
     def _create_app(self) -> web.Application:
         app = web.Application()
@@ -139,6 +152,7 @@ class DataApiModule(Module):
     # ── Alert endpoints ───────────────────────────────────────────────────────
 
     async def _get_alerts(self, request: web.Request) -> web.Response:
+        self.metrics.counter("http_requests_total", tags={"service": "data_api", "endpoint": "/api/v1/alerts", "method": "GET"})
         tenant_id = request.rel_url.query.get("tenant_id")
         severity = request.rel_url.query.get("severity")
         limit = int(request.rel_url.query.get("limit", 50))
@@ -149,14 +163,32 @@ class DataApiModule(Module):
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if severity:
             rows = [r for r in rows if r.get("severity") == severity]
-        return web.json_response(dumps=_dumps, data=rows[offset : offset + limit])
+        result = rows[offset : offset + limit]
+        self.log.debug(
+            "Alerts query served",
+            endpoint="/api/v1/alerts",
+            tenant_id=tenant_id or "",
+            status_code=200,
+            result_count=len(result),
+        )
+        return web.json_response(dumps=_dumps, data=result)
 
     async def _get_alert_by_id(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
         rows = await self.alerts_db.fetch_all_async("SELECT * FROM alerts")
         for row in rows:
             if row.get("alert_id") == alert_id:
+                self.log.debug(
+                    "Alert detail served",
+                    endpoint=f"/api/v1/alerts/{alert_id}",
+                    status_code=200,
+                )
                 return web.json_response(dumps=_dumps, data=row)
+        self.log.debug(
+            "Alert not found",
+            endpoint=f"/api/v1/alerts/{alert_id}",
+            status_code=404,
+        )
         raise web.HTTPNotFound(
             text=json.dumps({"error": "alert not found"}),
             content_type="application/json",
@@ -176,6 +208,7 @@ class DataApiModule(Module):
     async def _get_events_for_table(
         self, request: web.Request, table: str
     ) -> web.Response:
+        self.metrics.counter("http_requests_total", tags={"service": "data_api", "endpoint": f"/api/v1/events/{table}", "method": "GET"})
         tenant_id = request.rel_url.query.get("tenant_id")
         date = request.rel_url.query.get("date")
         limit = int(request.rel_url.query.get("limit", 50))
@@ -185,7 +218,15 @@ class DataApiModule(Module):
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if date:
             rows = [r for r in rows if r.get("transact_time", "").startswith(date)]
-        return web.json_response(dumps=_dumps, data=rows[:limit])
+        result = rows[:limit]
+        self.log.debug(
+            "Events query served",
+            endpoint=f"/api/v1/events/{table}",
+            tenant_id=tenant_id or "",
+            status_code=200,
+            result_count=len(result),
+        )
+        return web.json_response(dumps=_dumps, data=result)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

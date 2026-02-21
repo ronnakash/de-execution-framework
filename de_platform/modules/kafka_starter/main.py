@@ -36,6 +36,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
+from de_platform.services.metrics.interface import MetricsInterface
 
 
 class KafkaStarterModule(Module):
@@ -47,11 +48,13 @@ class KafkaStarterModule(Module):
         logger: LoggerFactory,
         mq: MessageQueueInterface,
         lifecycle: LifecycleManager,
+        metrics: MetricsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
         self.mq = mq
         self.lifecycle = lifecycle
+        self.metrics = metrics
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
@@ -66,6 +69,11 @@ class KafkaStarterModule(Module):
             executions_topic: ("execution", TRADE_NORMALIZATION),
             transactions_topic: ("transaction", TX_NORMALIZATION),
         }
+        self.log.info(
+            "Kafka Starter initialized",
+            module="kafka_starter",
+            topics=list(self._routes.keys()),
+        )
 
     async def execute(self) -> int:
         self.log.info("Kafka Starter running", topics=list(self._routes.keys()))
@@ -76,7 +84,7 @@ class KafkaStarterModule(Module):
                     if msg is not None:
                         self._process_message(event_type, norm_topic, msg)
             except Exception as exc:
-                self.log.error("Processing error", error=str(exc))
+                self.log.error("Processing error", module="kafka_starter", error=str(exc))
             if self.lifecycle.is_shutting_down:
                 break
             await asyncio.sleep(0.01)
@@ -105,10 +113,15 @@ class KafkaStarterModule(Module):
             self.mq.publish(NORMALIZATION_ERRORS, err_msg)
             self.mq.publish(self.client_errors_topic, err_msg)
 
+        if valid:
+            self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "kafka_starter", "event_type": event_type, "method": "kafka"})
+        if errors:
+            self.metrics.counter("events_errors_total", value=float(len(errors)), tags={"service": "kafka_starter", "event_type": event_type})
         if valid or errors:
             self.log.info(
                 "Processed message",
                 event_type=event_type,
+                topic=norm_topic,
                 accepted=len(valid),
                 rejected=len(errors),
             )

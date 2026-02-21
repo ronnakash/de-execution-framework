@@ -16,6 +16,7 @@ from de_platform.modules.file_processor.main import FileProcessorModule
 from de_platform.pipeline.topics import NORMALIZATION_ERRORS, TRADE_NORMALIZATION
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 pytestmark = pytest.mark.real_infra
@@ -48,6 +49,7 @@ async def test_file_processor_reads_from_minio(minio_fs):
         logger=LoggerFactory(default_impl="memory"),
         fs=minio_fs,
         mq=mq,
+        metrics=NoopMetrics(),
     )
     rc = await module.run()
     assert rc == 0
@@ -75,6 +77,7 @@ async def test_file_processor_minio_with_invalid_events(minio_fs):
         logger=LoggerFactory(default_impl="memory"),
         fs=minio_fs,
         mq=mq,
+        metrics=NoopMetrics(),
     )
     rc = await module.run()
     assert rc == 0

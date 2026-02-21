@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from de_platform.services.logger.interface import LoggingInterface
+from de_platform.services.logger.loki_logger import LokiLogger
 from de_platform.services.logger.memory_logger import MemoryLogger
 from de_platform.services.logger.pretty_logger import PrettyLogger
 
@@ -11,6 +12,7 @@ class LoggerFactory:
     _registry: dict[str, type[LoggingInterface]] = {
         "pretty": PrettyLogger,
         "memory": MemoryLogger,
+        "loki": LokiLogger,
     }
 
     def __init__(self, default_impl: str = "pretty") -> None:
