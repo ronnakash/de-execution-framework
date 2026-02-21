@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 pytest.importorskip("asyncpg")
@@ -7,14 +9,17 @@ from de_platform.services.secrets.env_secrets import EnvSecrets  # noqa: E402
 
 
 @pytest.fixture
-async def db(postgres_container):
-    """Connected PostgresDatabase backed by testcontainer.
+async def db():
+    """Connected PostgresDatabase backed by docker-compose Postgres.
 
     Uses an async fixture so it runs on the same event loop as pytest-asyncio tests.
     """
-    url = postgres_container.get_connection_url()
-    asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
-    secrets = EnvSecrets(overrides={"DB_TEST_URL": asyncpg_url})
+    if os.environ.get("DEVCONTAINER", "") == "1":
+        default_url = "postgresql://platform:platform@postgres:5432/platform"
+    else:
+        default_url = "postgresql://platform:platform@localhost:5432/platform"
+    url = os.environ.get("DB_TEST_URL", default_url)
+    secrets = EnvSecrets(overrides={"DB_TEST_URL": url})
     database = PostgresDatabase(secrets=secrets, prefix="DB_TEST")
 
     await database.connect_async()
@@ -26,10 +31,13 @@ async def db(postgres_container):
     await database.disconnect_async()
 
 
-async def test_connect_disconnect(postgres_container):
-    url = postgres_container.get_connection_url()
-    asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
-    secrets = EnvSecrets(overrides={"DB_TEST_URL": asyncpg_url})
+async def test_connect_disconnect():
+    if os.environ.get("DEVCONTAINER", "") == "1":
+        default_url = "postgresql://platform:platform@postgres:5432/platform"
+    else:
+        default_url = "postgresql://platform:platform@localhost:5432/platform"
+    url = os.environ.get("DB_TEST_URL", default_url)
+    secrets = EnvSecrets(overrides={"DB_TEST_URL": url})
     database = PostgresDatabase(secrets=secrets, prefix="DB_TEST")
     await database.connect_async()
     assert database.is_connected()

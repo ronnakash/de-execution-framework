@@ -1,18 +1,15 @@
 """Shared infrastructure fixtures for real-infra E2E tests.
 
-Supports two modes:
-  - Testcontainers (default): starts Postgres, ClickHouse, Redis, Kafka, MinIO in Docker.
-  - Dev infra (USE_DEV_INFRA=1): reuses existing containers from docker-compose.
-
-All fixtures that produce real service instances use session scope for containers
-and function scope for cleanup, giving each test a clean slate.
+Uses docker-compose services (started via ``make infra-up`` or the devcontainer).
+When DEVCONTAINER=1, uses Docker DNS names (postgres, redis, kafka:29092, etc.);
+otherwise defaults to localhost.
 """
 
 from __future__ import annotations
 
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +35,6 @@ class InfraConfig:
     minio_access_key: str
     minio_secret_key: str
     minio_bucket: str
-    # Keep container references alive to prevent GC
-    _containers: list[Any] = field(default_factory=list, repr=False)
 
     def to_env_overrides(self, group_id: str = "test") -> dict[str, str]:
         """Build env var dict for EnvSecrets / subprocess env."""
@@ -64,98 +59,33 @@ class InfraConfig:
         }
 
 
-# ── Testcontainer startup ───────────────────────────────────────────────────
+def _infra_config() -> InfraConfig:
+    """Return InfraConfig pointing to docker-compose services.
 
+    When DEVCONTAINER=1, uses Docker DNS names; otherwise localhost.
+    Individual values can be overridden via environment variables.
+    """
+    in_devcontainer = os.environ.get("DEVCONTAINER", "") == "1"
+    pg_host = "postgres" if in_devcontainer else "localhost"
+    redis_host = "redis" if in_devcontainer else "localhost"
+    kafka_bootstrap = "kafka:29092" if in_devcontainer else "localhost:9092"
+    minio_host = "minio" if in_devcontainer else "localhost"
+    ch_host = "clickhouse" if in_devcontainer else "localhost"
 
-def _start_testcontainers() -> InfraConfig:
-    """Start all 5 infrastructure containers via testcontainers-python."""
-    from testcontainers.postgres import PostgresContainer
-    from testcontainers.redis import RedisContainer
-    from testcontainers.kafka import KafkaContainer
-    from testcontainers.core.container import DockerContainer
-    from testcontainers.core.waiting_utils import wait_for_logs
-
-    containers: list[Any] = []
-
-    # Postgres
-    pg = PostgresContainer("postgres:16")
-    pg.start()
-    containers.append(pg)
-    pg_url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
-
-    # Redis
-    redis_c = RedisContainer("redis:7-alpine")
-    redis_c.start()
-    containers.append(redis_c)
-    redis_url = f"redis://{redis_c.get_container_host_ip()}:{redis_c.get_exposed_port(6379)}/0"
-
-    # Kafka
-    kafka_c = KafkaContainer("confluentinc/cp-kafka:7.6.0")
-    kafka_c.start()
-    containers.append(kafka_c)
-    kafka_bootstrap = kafka_c.get_bootstrap_server()
-
-    # ClickHouse
-    ch = (
-        DockerContainer("clickhouse/clickhouse-server:latest")
-        .with_exposed_ports(8123)
-        .with_env("CLICKHOUSE_DB", "fraud_pipeline")
-        .with_env("CLICKHOUSE_USER", "default")
-        .with_env("CLICKHOUSE_PASSWORD", "clickhouse")
-    )
-    ch.start()
-    wait_for_logs(ch, "Logging trace to", timeout=30)
-    containers.append(ch)
-    ch_host = ch.get_container_host_ip()
-    ch_port = int(ch.get_exposed_port(8123))
-
-    # MinIO
-    minio_c = (
-        DockerContainer("minio/minio:latest")
-        .with_exposed_ports(9000)
-        .with_env("MINIO_ROOT_USER", "minioadmin")
-        .with_env("MINIO_ROOT_PASSWORD", "minioadmin")
-        .with_command("server /data")
-    )
-    minio_c.start()
-    wait_for_logs(minio_c, "API:", timeout=30)
-    containers.append(minio_c)
-    minio_host = minio_c.get_container_host_ip()
-    minio_port = minio_c.get_exposed_port(9000)
-
-    return InfraConfig(
-        postgres_url=pg_url,
-        clickhouse_host=ch_host,
-        clickhouse_port=ch_port,
-        clickhouse_database="fraud_pipeline",
-        clickhouse_user="default",
-        clickhouse_password="",
-        redis_url=redis_url,
-        kafka_bootstrap_servers=kafka_bootstrap,
-        minio_endpoint=f"{minio_host}:{minio_port}",
-        minio_access_key="minioadmin",
-        minio_secret_key="minioadmin",
-        minio_bucket="de-platform-test",
-        _containers=containers,
-    )
-
-
-def _dev_infra_config() -> InfraConfig:
-    """Return InfraConfig pointing to dev services (localhost or docker-compose names)."""
     return InfraConfig(
         postgres_url=os.environ.get(
-            "DB_WAREHOUSE_URL", "postgresql://platform:platform@localhost:5432/platform"
+            "DB_WAREHOUSE_URL", f"postgresql://platform:platform@{pg_host}:5432/platform"
         ),
-        clickhouse_host=os.environ.get("DB_CLICKHOUSE_HOST", "localhost"),
+        clickhouse_host=os.environ.get("DB_CLICKHOUSE_HOST", ch_host),
         clickhouse_port=int(os.environ.get("DB_CLICKHOUSE_PORT", "8123")),
         clickhouse_database=os.environ.get("DB_CLICKHOUSE_DATABASE", "fraud_pipeline"),
         clickhouse_user=os.environ.get("DB_CLICKHOUSE_USER", "default"),
         clickhouse_password=os.environ.get("DB_CLICKHOUSE_PASSWORD", "clickhouse"),
-        redis_url=os.environ.get("CACHE_REDIS_URL", "redis://localhost:6379/0"),
+        redis_url=os.environ.get("CACHE_REDIS_URL", f"redis://{redis_host}:6379/0"),
         kafka_bootstrap_servers=os.environ.get(
-            "MQ_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+            "MQ_KAFKA_BOOTSTRAP_SERVERS", kafka_bootstrap
         ),
-        minio_endpoint=os.environ.get("FS_MINIO_ENDPOINT", "localhost:9000"),
+        minio_endpoint=os.environ.get("FS_MINIO_ENDPOINT", f"{minio_host}:9000"),
         minio_access_key=os.environ.get("FS_MINIO_ACCESS_KEY", "minioadmin"),
         minio_secret_key=os.environ.get("FS_MINIO_SECRET_KEY", "minioadmin"),
         minio_bucket=os.environ.get("FS_MINIO_BUCKET", "de-platform-test"),
@@ -167,10 +97,8 @@ def _dev_infra_config() -> InfraConfig:
 
 @pytest.fixture(scope="session")
 def infra() -> InfraConfig:
-    """Provide infrastructure connection details (testcontainers or devcontainer)."""
-    if os.environ.get("USE_DEV_INFRA", "").strip() in ("1", "true", "yes"):
-        return _dev_infra_config()
-    return _start_testcontainers()
+    """Provide infrastructure connection details from docker-compose services."""
+    return _infra_config()
 
 
 # ── Session-scoped schema initialization ─────────────────────────────────────

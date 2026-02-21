@@ -9,7 +9,7 @@ Each harness provides a uniform interface for test scenarios to:
 
 Three implementations:
   - MemoryHarness:     in-memory stubs, manual step-by-step pipeline driving
-  - ContainerHarness:  real infra (testcontainers), 6 asyncio tasks in-process
+  - ContainerHarness:  real infra (docker-compose), 6 asyncio tasks in-process
   - SubprocessHarness: real infra, 6 OS subprocesses
 """
 
@@ -345,7 +345,7 @@ class MemoryHarness:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ContainerHarness — real infra, 6 asyncio tasks in-process
+# ContainerHarness — real infra (docker-compose), 6 asyncio tasks in-process
 # ══════════════════════════════════════════════════════════════════════════════
 
 

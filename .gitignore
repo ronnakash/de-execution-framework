@@ -39,6 +39,7 @@ data_platform_phase2_spec.md
 .env
 .env.*
 .envfiles/
+!.envfiles/devcontainer.env
 
 # Distribution / packaging
 dist/

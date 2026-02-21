@@ -1,7 +1,7 @@
 """Real-infra E2E tests via ContainerHarness.
 
 All 6 pipeline modules run as concurrent asyncio tasks with real Postgres,
-ClickHouse, Redis, Kafka, and MinIO (via testcontainers or dev infra).
+ClickHouse, Redis, Kafka, and MinIO (via docker-compose).
 
 34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
 

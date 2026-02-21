@@ -62,6 +62,7 @@ def test_resolve_kafka_queue():
 
 
 def test_resolve_postgres_database():
+    pytest.importorskip("asyncpg")
     cls = resolve_implementation("db", "postgres")
     from de_platform.services.database.postgres_database import PostgresDatabase
 

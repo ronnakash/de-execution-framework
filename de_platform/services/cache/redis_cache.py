@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import redis
+if TYPE_CHECKING:
+    import redis
 
 from de_platform.services.cache.interface import CacheInterface
 from de_platform.services.secrets.interface import SecretsInterface
@@ -17,6 +18,8 @@ class RedisCache(CacheInterface):
         self._client: redis.Redis | None = None  # type: ignore[type-arg]
 
     def connect(self) -> None:
+        import redis
+
         self._client = redis.Redis.from_url(self._url, decode_responses=False)
 
     def disconnect(self) -> None:

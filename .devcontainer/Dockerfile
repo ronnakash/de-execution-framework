@@ -13,9 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Grant the vscode user access to the Docker socket (mounted from host)
-# so testcontainers can start Postgres, Redis, etc. for integration tests.
-RUN groupadd -f docker && usermod -aG docker vscode
+# Pre-install Python deps in image layer (only re-runs when pyproject.toml changes)
+COPY pyproject.toml /tmp/pyproject.toml
+RUN pip install \
+    "asyncpg>=0.29.0" "redis>=5.0" "confluent-kafka>=2.3" \
+    "aiohttp>=3.9" "minio>=7.0" "prometheus-client>=0.20" \
+    "clickhouse-connect>=0.7" \
+    "pytest>=8.0" "pytest-asyncio>=0.24" "ruff>=0.8" "mypy>=1.13"
 
 # The base Debian image ships a system Python 3.13 at /usr/bin/python3.13.
 # VS Code's test adapter discovers it and uses it for pytest discovery,

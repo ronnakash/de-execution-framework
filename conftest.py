@@ -1,31 +1,32 @@
-"""Root-level pytest fixtures: testcontainer-backed databases with auto-migration."""
+"""Root-level pytest fixtures: docker-compose-backed databases with auto-migration."""
 
 from __future__ import annotations
+
+import os
 
 import pytest
 
 
-@pytest.fixture(scope="session")
-def postgres_container():
-    """Single Postgres container for the test session."""
-    from testcontainers.postgres import PostgresContainer
-
-    with PostgresContainer("postgres:16") as pg:
-        yield pg
-
-
 @pytest.fixture
-async def warehouse_db(postgres_container):
-    """Connected + migrated Postgres for 'warehouse' DB."""
+async def warehouse_db():
+    """Connected + migrated Postgres for 'warehouse' DB.
+
+    Connects to the docker-compose Postgres (localhost or Docker DNS depending
+    on DEVCONTAINER env var).  Skipped cleanly when asyncpg is not installed.
+    """
+    pytest.importorskip("asyncpg")
+
     from de_platform.migrations.runner import MigrationRunner
     from de_platform.services.database.postgres_database import PostgresDatabase
     from de_platform.services.secrets.env_secrets import EnvSecrets
 
-    # testcontainers gives a psycopg2-style URL; convert to asyncpg format
-    url = postgres_container.get_connection_url()
-    asyncpg_url = url.replace("postgresql+psycopg2://", "postgresql://")
+    if os.environ.get("DEVCONTAINER", "") == "1":
+        default_url = "postgresql://platform:platform@postgres:5432/platform"
+    else:
+        default_url = "postgresql://platform:platform@localhost:5432/platform"
 
-    secrets = EnvSecrets(overrides={"DB_WAREHOUSE_URL": asyncpg_url})
+    url = os.environ.get("DB_WAREHOUSE_URL", default_url)
+    secrets = EnvSecrets(overrides={"DB_WAREHOUSE_URL": url})
     db = PostgresDatabase(secrets=secrets, prefix="DB_WAREHOUSE")
 
     await db.connect_async()

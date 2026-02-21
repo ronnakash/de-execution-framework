@@ -3,7 +3,10 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
-  "postCreateCommand": "pip install -e '.[dev]'",
+  "containerEnv": {
+    "DEVCONTAINER": "1"
+  },
+  "postCreateCommand": "pip install -e '.[dev,infra]'",
   "forwardPorts": [5432, 6379, 9000, 9001, 9092, 9090, 9091, 3000],
   "customizations": {
     "vscode": {

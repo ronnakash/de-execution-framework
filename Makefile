@@ -1,37 +1,54 @@
-.PHONY: test test-unit test-integration test-e2e test-real-infra test-real-infra-dev lint format run migrate infra-up infra-down
+.PHONY: test test-unit test-integration test-e2e test-real-infra local-unit local-e2e local-e2e-infra lint format run migrate infra-up infra-down setup setup-full
+
+PYTHON ?= python3
+PYTEST = $(PYTHON) -m pytest
 
 test:
-	pytest de_platform/ tests/ -v -m "not real_infra"
+	$(PYTEST) de_platform/ tests/ -v -m "not real_infra"
 
 test-unit:
-	pytest de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
+	$(PYTEST) de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
 
 test-e2e:
-	pytest tests/e2e/ -v -m "not real_infra" --tb=short
+	$(PYTEST) tests/e2e/ -v -m "not real_infra" --tb=short
 
 test-real-infra:
-	pytest tests/e2e/ -v -m real_infra --tb=short -x
-
-test-real-infra-dev:
-	USE_DEV_INFRA=1 pytest tests/e2e/ -v -m real_infra --tb=short -x
+	$(PYTEST) tests/e2e/ -v -m real_infra --tb=short -x
 
 lint:
-	ruff check de_platform/
+	$(PYTHON) -m ruff check de_platform/
 
 format:
-	ruff format de_platform/
+	$(PYTHON) -m ruff format de_platform/
 
 run:
-	python -m de_platform run $(module) $(args)
+	$(PYTHON) -m de_platform run $(module) $(args)
 
 migrate:
-	python -m de_platform migrate $(cmd) $(args)
+	$(PYTHON) -m de_platform migrate $(cmd) $(args)
 
 test-integration:
-	pytest -v -k "postgres" --tb=short
+	$(PYTEST) -v -k "postgres" --tb=short
+
+local-unit: setup
+	.venv/bin/python -m pytest de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
+
+local-e2e: setup
+	.venv/bin/python -m pytest tests/e2e/ -v -m "not real_infra" --tb=short
+
+local-e2e-infra: setup-full infra-up
+	.venv/bin/python -m pytest tests/e2e/ -v -m real_infra --tb=short -x
 
 infra-up:
 	docker compose -f .devcontainer/docker-compose.yml up -d postgres redis minio zookeeper kafka clickhouse
 
 infra-down:
 	docker compose -f .devcontainer/docker-compose.yml down
+
+setup:
+	python3.12 -m venv .venv
+	.venv/bin/pip install -e '.[dev]'
+
+setup-full:
+	python3.12 -m venv .venv
+	.venv/bin/pip install -e '.[dev,infra]'

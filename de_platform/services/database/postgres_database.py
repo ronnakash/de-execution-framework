@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
-import asyncpg
+if TYPE_CHECKING:
+    import asyncpg
 
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.secrets.interface import SecretsInterface
@@ -28,6 +29,8 @@ class PostgresDatabase(DatabaseInterface):
     # -- Connection management ------------------------------------------------
 
     async def connect_async(self) -> None:
+        import asyncpg
+
         url = self._secrets.require(f"{self._prefix}_URL")
         min_size = int(self._secrets.get_or_default(f"{self._prefix}_POOL_MIN", "2"))
         max_size = int(self._secrets.get_or_default(f"{self._prefix}_POOL_MAX", "10"))

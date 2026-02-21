@@ -5,11 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Local setup (outside devcontainer)
+make setup                   # venv + core deps only (unit tests)
+make setup-full              # venv + core + infra deps (integration/e2e tests)
+source .venv/bin/activate
+
 # Tests
 make test                    # all tests (de_platform/ + tests/)
-make test-unit               # unit tests only (skips postgres integration tests)
+make test-unit               # unit tests only (no infra deps required)
 make test-e2e                # end-to-end pipeline tests (tests/e2e/, in-memory only)
-make test-integration        # testcontainer-backed postgres tests
+make test-integration        # docker-compose-backed postgres tests
+make test-real-infra         # full real-infra e2e tests (requires make infra-up)
 
 # Run a single test
 pytest de_platform/modules/normalizer/tests/test_main.py -v
@@ -38,7 +44,9 @@ make infra-down
 
 ### Interface-Driven Dependency Injection
 
-Every external dependency is an ABC in `de_platform/services/<name>/interface.py`. At runtime the CLI selects concrete implementations via flags; the same module code runs unchanged with in-memory stubs (unit tests), testcontainers (integration tests), or real infrastructure (production).
+Every external dependency is an ABC in `de_platform/services/<name>/interface.py`. At runtime the CLI selects concrete implementations via flags; the same module code runs unchanged with in-memory stubs (unit tests), docker-compose services (integration tests), or real infrastructure (production).
+
+**Optional infra deps:** Heavy libraries (asyncpg, redis, confluent-kafka, minio, clickhouse-connect) are in the `[infra]` optional group. Unit tests run without them (`pip install -e '.[dev]'`). Integration/e2e tests need them (`pip install -e '.[dev,infra]'`). Imports are lazy — modules like `PostgresDatabase` and `RedisCache` only import their libraries at connection time.
 
 **Seven interfaces and their implementations:**
 
@@ -100,8 +108,10 @@ Fraud detection pipeline built on top of the framework:
 
 ### Testing Patterns
 
-**Unit tests** (per-module in `de_platform/modules/<name>/tests/`): use all memory implementations, instantiate the module directly without the DI container.
+**Unit tests** (per-module in `de_platform/modules/<name>/tests/`): use all memory implementations, instantiate the module directly without the DI container. No infra deps required.
 
-**E2E tests** (`tests/e2e/`): shared test scenarios in `tests/helpers/scenarios.py` run via three harness implementations — `MemoryHarness` (in-memory, manual stepping), `ContainerHarness` (testcontainers, asyncio tasks), and `SubprocessHarness` (real infra, OS subprocesses). The `PipelineHarness` protocol and implementations live in `tests/helpers/harness.py`. `tests/e2e/test_pipeline.py` has 5 narrative tests using in-memory stubs directly.
+**E2E tests** (`tests/e2e/`): shared test scenarios in `tests/helpers/scenarios.py` run via harness implementations — `MemoryHarness` (in-memory, manual stepping) and `SubprocessHarness` (real infra, OS subprocesses). The `PipelineHarness` protocol and implementations live in `tests/helpers/harness.py`. `tests/e2e/test_pipeline.py` has 5 narrative tests using in-memory stubs directly. Real-infra e2e tests use docker-compose services (no testcontainers).
 
-**Integration tests** (`conftest.py` root fixtures): `postgres_container` (session-scoped testcontainer) → `warehouse_db` fixture runs real migrations then yields a connected `PostgresDatabase`. Marked with `-k "postgres"`.
+**Integration tests** (`conftest.py` root fixtures): `warehouse_db` fixture connects to docker-compose Postgres, runs real migrations, then yields a connected `PostgresDatabase`. Skipped automatically when asyncpg is not installed. Marked with `-k "postgres"`.
+
+**DEVCONTAINER detection:** When `DEVCONTAINER=1` is set (automatic in devcontainer), test fixtures use Docker DNS names (postgres, redis, kafka:29092). Otherwise they default to localhost.
