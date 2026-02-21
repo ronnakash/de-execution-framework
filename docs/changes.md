@@ -16,6 +16,12 @@
 16. we need some task module scheduler/manager that stores all previous module runs (keep in mind that this applies to non-service modules and just for task runs, file-processor should count too). The idea is this - we can track previous task runs and see if they passed/failed, and be able to have scheduled runs. For example, schedule the fetching of currency rates every hour to currency service, or run algos for batch clients on a set time period (hour-wize, dates increment every time) at a configurable hour for the client. We should also be able to have some custom code per-task to fetch args for the runs
 17. client configuration should have algo run time
 18. client configuration should have available algos for the client
+19. e2e tests are running sequentially. Can we modify them to run concurrently/paralelly? I think this will require modifying the tests themselves to either set up a new client each time or maybe have separate execution venues for events and separate algos also by ex_venue
+20. when e2es run and the first fails we don't wait for the rest
+21. we have separate module and async module definitions in modules/base.py they should be consolidated into one 
+22. if I have an error in one of my services (for example, algos tries to insert date as string instead of datetime to postgres) the service crashes. This is not good!!! it should log the error and keep running 
+23. we are deleting kafka topics between tests, why would we do that? If there is a good reason we need a better fix
+24. services that interact with infra should have comprehensive integration tests!! for example, if we insert data into Postgres or ClickHouse (or redis, minio ect) or fetch data from there, we should have tests that try to do that with real data
 
 
 write a detailed plan to implement the changes. We should have it executeable step-by-step and have some order that makes sense to do so

@@ -91,8 +91,21 @@ class DataApiModule(AsyncModule):
         """Pull one alert off the Kafka topic and persist it."""
         msg = self.mq.consume_one(ALERTS)
         if msg:
-            await self.alerts_db.insert_one_async("alerts", msg)
-            self.log.info("Alert persisted", alert_id=msg.get("alert_id", ""))
+            # details arrives as dict from JSON but Postgres expects a JSON string for JSONB
+            if isinstance(msg.get("details"), dict):
+                msg["details"] = json.dumps(msg["details"])
+            # created_at arrives as ISO string but Postgres TIMESTAMP needs datetime
+            if isinstance(msg.get("created_at"), str):
+                from datetime import datetime
+
+                dt = datetime.fromisoformat(msg["created_at"])
+                msg["created_at"] = dt.replace(tzinfo=None)
+            try:
+                await self.alerts_db.insert_one_async("alerts", msg)
+                self.log.info("Alert persisted", alert_id=msg.get("alert_id", ""))
+            except Exception:
+                # Alert may already exist (inserted by algos module directly)
+                self.log.debug("Alert insert skipped (duplicate)", alert_id=msg.get("alert_id", ""))
 
     def _create_app(self) -> web.Application:
         app = web.Application()

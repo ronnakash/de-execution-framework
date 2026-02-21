@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS orders
 (
     id              String,
     tenant_id       String,
+    event_type      String,
     status          String,
     transact_time   String,
     symbol          String,
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS executions
 (
     id              String,
     tenant_id       String,
+    event_type      String,
     status          String,
     transact_time   String,
     order_id        String,
@@ -51,6 +53,7 @@ CREATE TABLE IF NOT EXISTS transactions
 (
     id               String,
     tenant_id        String,
+    event_type       String,
     status           String,
     transact_time    String,
     account_id       String,
@@ -93,11 +96,13 @@ ORDER BY (tenant_id, created_at);
 CREATE TABLE IF NOT EXISTS alerts
 (
     alert_id    String,
+    tenant_id   String,
+    event_type  String,
+    event_id    String,
+    message_id  String,
     algorithm   String,
     severity    String,
-    tenant_id   String,
-    event_id    String,
-    event_type  String,
+    description String,
     details     String,
     created_at  String
 )

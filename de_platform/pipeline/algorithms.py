@@ -6,10 +6,11 @@ given an enriched event dict.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +35,18 @@ class Alert:
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "alert_id": self.alert_id,
+            "tenant_id": self.tenant_id,
+            "event_type": self.event_type,
+            "event_id": self.event_id,
+            "message_id": self.message_id,
+            "algorithm": self.algorithm,
+            "severity": self.severity,
+            "description": self.description,
+            "details": json.dumps(self.details),
+            "created_at": self.created_at,
+        }
 
 
 class FraudAlgorithm(ABC):

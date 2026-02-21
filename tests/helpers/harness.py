@@ -91,16 +91,21 @@ async def poll_until(
 async def _wait_for_http(url: str, timeout: float = 15.0) -> None:
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
+    last_error: str = "no connection attempted"
     while True:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
                     if resp.status < 500:
                         return
-        except (aiohttp.ClientConnectorError, aiohttp.ServerConnectionError, OSError):
-            pass
+                    body = await resp.text()
+                    last_error = f"status={resp.status} body={body[:200]}"
+        except (aiohttp.ClientConnectorError, aiohttp.ServerConnectionError, OSError) as e:
+            last_error = f"connection error: {e}"
         if loop.time() > deadline:
-            raise TimeoutError(f"HTTP service at {url} not ready within {timeout}s")
+            raise TimeoutError(
+                f"HTTP service at {url} not ready within {timeout}s (last: {last_error})"
+            )
         await asyncio.sleep(0.1)
 
 
@@ -387,11 +392,16 @@ class ContainerHarness:
         group_base = uuid.uuid4().hex[:8]
 
         def _make_secrets(suffix: str) -> EnvSecrets:
-            return EnvSecrets(
-                overrides=infra.to_env_overrides(
-                    group_id=f"inproc-{group_base}-{suffix}"
-                )
+            overrides = infra.to_env_overrides(
+                group_id=f"inproc-{group_base}-{suffix}"
             )
+            # Very short poll timeout: (a) prevents blocking consume_one()
+            # from starving the event loop when modules share one asyncio
+            # loop, and (b) reduces idle wait when polling topics with no
+            # messages (4 empty polls per persistence iteration at 50ms
+            # each = 200ms overhead; at 10ms = 40ms overhead).
+            overrides["MQ_KAFKA_POLL_TIMEOUT"] = "0.01"
+            return EnvSecrets(overrides=overrides)
 
         logger = LoggerFactory(default_impl="memory")
         self._lifecycles = [LifecycleManager() for _ in range(6)]
@@ -483,10 +493,25 @@ class ContainerHarness:
             ),
         ]
 
-        self._tasks = [asyncio.create_task(m.run()) for m in modules]
+        names = ["rest_starter", "kafka_starter", "normalizer", "persistence", "algos", "data_api"]
+        self._tasks = [
+            asyncio.create_task(m.run(), name=n) for m, n in zip(modules, names)
+        ]
 
-        await _wait_for_http(f"http://127.0.0.1:{self.rest_port}/api/v1/health")
-        await _wait_for_http(f"http://127.0.0.1:{self.api_port}/api/v1/alerts")
+        for url in [
+            f"http://127.0.0.1:{self.rest_port}/api/v1/health",
+            f"http://127.0.0.1:{self.api_port}/api/v1/alerts",
+        ]:
+            try:
+                await _wait_for_http(url, timeout=30.0)
+            except TimeoutError:
+                # Surface errors from crashed tasks
+                for t in self._tasks:
+                    if t.done() and t.exception():
+                        raise RuntimeError(
+                            f"Module task '{t.get_name()}' crashed: {t.exception()}"
+                        ) from t.exception()
+                raise
 
         # Producer for Kafka ingestion
         producer_mq = KafkaQueue(_make_secrets("producer"))
@@ -513,6 +538,14 @@ class ContainerHarness:
 
     # ── Harness interface ────────────────────────────────────────────────
 
+    def _check_tasks_alive(self) -> None:
+        """Raise immediately if any module task has crashed."""
+        for t in self._tasks:
+            if t.done() and t.exception():
+                raise RuntimeError(
+                    f"Module task '{t.get_name()}' crashed: {t.exception()}"
+                ) from t.exception()
+
     async def ingest(
         self, method: str, event_type: str, events: list[dict]
     ) -> None:
@@ -534,19 +567,21 @@ class ContainerHarness:
     async def wait_for_rows(
         self, table: str, expected: int, timeout: float = 60.0
     ) -> list[dict]:
-        await poll_until(
-            lambda: len(
-                self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
+        def _check() -> bool:
+            self._check_tasks_alive()
+            return (
+                len(self._clickhouse_db.fetch_all(f"SELECT * FROM {table}"))
+                >= expected
             )
-            >= expected,
-            timeout=timeout,
-        )
+
+        await poll_until(_check, timeout=timeout)
         return self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
 
     async def wait_for_no_new_rows(
         self, table: str, known: int, timeout: float = 5.0
     ) -> None:
         await asyncio.sleep(timeout)
+        self._check_tasks_alive()
         rows = self._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
         if len(rows) != known:
             raise AssertionError(
@@ -554,19 +589,24 @@ class ContainerHarness:
             )
 
     async def fetch_alerts(self) -> list[dict]:
-        return self._alerts_db.fetch_all("SELECT * FROM alerts")
+        self._check_tasks_alive()
+        return await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 60.0
     ) -> list[dict]:
-        await poll_until(
-            lambda: any(
-                predicate(r)
-                for r in self._alerts_db.fetch_all("SELECT * FROM alerts")
-            ),
-            timeout=timeout,
-        )
-        return self._alerts_db.fetch_all("SELECT * FROM alerts")
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            self._check_tasks_alive()
+            rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+            if any(predicate(r) for r in rows):
+                return rows
+            if loop.time() > deadline:
+                raise TimeoutError(
+                    "wait_for_alert: condition not met within timeout"
+                )
+            await asyncio.sleep(0.1)
 
     async def query_api(
         self, endpoint: str, params: dict[str, str]
@@ -821,19 +861,22 @@ class SubprocessHarness:
             )
 
     async def fetch_alerts(self) -> list[dict]:
-        return self._alerts_db.fetch_all("SELECT * FROM alerts")
+        return await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 60.0
     ) -> list[dict]:
-        await poll_until(
-            lambda: any(
-                predicate(r)
-                for r in self._alerts_db.fetch_all("SELECT * FROM alerts")
-            ),
-            timeout=timeout,
-        )
-        return self._alerts_db.fetch_all("SELECT * FROM alerts")
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while True:
+            rows = await self._alerts_db.fetch_all_async("SELECT * FROM alerts")
+            if any(predicate(r) for r in rows):
+                return rows
+            if loop.time() > deadline:
+                raise TimeoutError(
+                    "wait_for_alert: condition not met within timeout"
+                )
+            await asyncio.sleep(0.1)
 
     async def query_api(
         self, endpoint: str, params: dict[str, str]

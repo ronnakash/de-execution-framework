@@ -15,6 +15,12 @@ class KafkaQueue(MessageQueueInterface):
             "MQ_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
         )
         self._group_id = secrets.get_or_default("MQ_KAFKA_GROUP_ID", "de-platform")
+        self._poll_timeout = float(
+            secrets.get_or_default("MQ_KAFKA_POLL_TIMEOUT", "1.0")
+        )
+        self._offset_reset = secrets.get_or_default(
+            "MQ_KAFKA_AUTO_OFFSET_RESET", "earliest"
+        )
         self._producer: Any = None
         self._consumer: Any = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
@@ -28,7 +34,7 @@ class KafkaQueue(MessageQueueInterface):
         self._consumer = Consumer({
             "bootstrap.servers": self._bootstrap,
             "group.id": self._group_id,
-            "auto.offset.reset": "earliest",
+            "auto.offset.reset": self._offset_reset,
         })
 
     def disconnect(self) -> None:
@@ -70,7 +76,7 @@ class KafkaQueue(MessageQueueInterface):
             self._consumer.subscribe(list(self._subscribed_topics))
 
         # 3. Poll and filter by topic
-        msg = self._consumer.poll(timeout=1.0)
+        msg = self._consumer.poll(timeout=self._poll_timeout)
         if msg is None or msg.error():
             return None
 

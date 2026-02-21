@@ -224,6 +224,50 @@ def _cleanup_between_tests(request) -> None:
     cache.set("currency_rate:USD_USD", 1.00)
     cache.disconnect()
 
+    # Delete and recreate Kafka topics to purge stale messages.
+    # Topics must be recreated so they exist when consumers subscribe;
+    # otherwise consumers can't get partition assignments until a slow
+    # metadata refresh (default metadata.max.age.ms = 5 minutes).
+    import time
+    from confluent_kafka.admin import AdminClient, NewTopic
+    from de_platform.pipeline.topics import (
+        TRADE_NORMALIZATION, TX_NORMALIZATION,
+        NORMALIZATION_ERRORS, DUPLICATES,
+        ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
+        TRADES_ALGOS, TRANSACTIONS_ALGOS, ALERTS,
+    )
+    admin = AdminClient({"bootstrap.servers": infra.kafka_bootstrap_servers})
+    all_topics = [
+        # Internal pipeline topics
+        TRADE_NORMALIZATION, TX_NORMALIZATION,
+        NORMALIZATION_ERRORS, DUPLICATES,
+        ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
+        TRADES_ALGOS, TRANSACTIONS_ALGOS, ALERTS,
+        # Client-facing inbound topics (used by kafka ingestion)
+        "client_orders", "client_executions", "client_transactions",
+        "client_errors",
+    ]
+    # Step 1: Delete all topics
+    futures = admin.delete_topics(all_topics, operation_timeout=30)
+    for f in futures.values():
+        try:
+            f.result(timeout=30)
+        except Exception:
+            pass
+    # Wait for Kafka to fully process deletions before recreating.
+    time.sleep(2)
+    # Step 2: Recreate topics so they exist when consumers subscribe
+    new_topics = [
+        NewTopic(t, num_partitions=1, replication_factor=1)
+        for t in all_topics
+    ]
+    futures = admin.create_topics(new_topics, operation_timeout=30)
+    for f in futures.values():
+        try:
+            f.result(timeout=30)
+        except Exception:
+            pass
+
 
 # ── Per-test Kafka isolation ─────────────────────────────────────────────────
 

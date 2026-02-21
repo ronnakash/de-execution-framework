@@ -20,8 +20,9 @@ Scenarios:
 
 from __future__ import annotations
 
+import json
 import uuid
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 from de_platform.pipeline.topics import TRADE_NORMALIZATION
 
@@ -37,6 +38,21 @@ from tests.helpers.events import (
 
 if TYPE_CHECKING:
     from tests.helpers.harness import PipelineHarness
+
+
+def _ensure_parsed(value: Any) -> Any:
+    """Parse a JSON string to a native Python object, or return as-is.
+
+    ClickHouse stores dicts/lists as JSON strings in String columns.
+    MemoryDatabase keeps them as native Python types. This helper
+    normalizes both to native types for assertions.
+    """
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return value
+    return value
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -234,12 +250,13 @@ async def scenario_multi_error_consolidation(
         f"Expected exactly 10 consolidated error rows, got {len(error_rows)}"
     )
     for row in error_rows:
-        errors = row.get("errors")
+        errors = _ensure_parsed(row.get("errors"))
         assert isinstance(errors, list), f"errors should be a list, got {type(errors)}"
         assert len(errors) >= 2, (
             f"Each error row should have >= 2 errors, got {len(errors)}"
         )
-        assert row.get("raw_data") is not None, "raw_data should contain the original event"
+        raw_data = _ensure_parsed(row.get("raw_data"))
+        assert raw_data is not None, "raw_data should contain the original event"
 
     # No valid rows should exist
     table = EVENT_TABLE[event_type]
@@ -272,6 +289,6 @@ async def scenario_duplicate_contains_original_event(
     assert len(dup_rows) == 1
     dup = dup_rows[0]
     assert "original_event" in dup, "duplicate row must have original_event"
-    original = dup["original_event"]
+    original = _ensure_parsed(dup["original_event"])
     assert isinstance(original, dict), "original_event should be a dict"
     assert original.get("id") == fixed_id

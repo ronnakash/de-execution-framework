@@ -22,10 +22,18 @@ Config (via secrets, prefix defaults to ``"DB_CLICKHOUSE"``):
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.secrets.interface import SecretsInterface
+
+
+def _serialize_for_clickhouse(value: Any) -> Any:
+    """Serialize dict/list values to JSON strings for ClickHouse String columns."""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
 
 
 class ClickHouseDatabase(DatabaseInterface):
@@ -100,7 +108,7 @@ class ClickHouseDatabase(DatabaseInterface):
     def insert_one(self, table: str, row: dict[str, Any]) -> int:
         self._check_connected()
         column_names = list(row.keys())
-        data = [[row[col] for col in column_names]]
+        data = [[_serialize_for_clickhouse(row[col]) for col in column_names]]
         self._client.insert(table, data, column_names=column_names)
         return 1
 
@@ -115,7 +123,10 @@ class ClickHouseDatabase(DatabaseInterface):
             return 0
 
         column_names = list(rows[0].keys())
-        data = [[row[col] for col in column_names] for row in rows]
+        data = [
+            [_serialize_for_clickhouse(row[col]) for col in column_names]
+            for row in rows
+        ]
         self._client.insert(table, data, column_names=column_names)
         return len(rows)
 

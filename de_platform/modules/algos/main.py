@@ -15,7 +15,6 @@ Topics produced:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
 from typing import Any
 
 from de_platform.config.context import ModuleConfig
@@ -87,9 +86,15 @@ class AlgosModule(AsyncModule):
         for algo in self.algorithms:
             alert = algo.evaluate(event)
             if alert:
-                alert_dict = asdict(alert)
+                alert_dict = alert.to_dict()
                 self.mq.publish(ALERTS, alert_dict)
-                await self.db.insert_one_async("alerts", alert_dict)
+                # Postgres TIMESTAMP needs datetime, not ISO string
+                db_row = dict(alert_dict)
+                if isinstance(db_row.get("created_at"), str):
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(db_row["created_at"])
+                    db_row["created_at"] = dt.replace(tzinfo=None)
+                await self.db.insert_one_async("alerts", db_row)
                 self.log.info(
                     "Alert generated",
                     algorithm=algo.name(),

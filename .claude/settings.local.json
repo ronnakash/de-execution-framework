@@ -9,7 +9,9 @@
       "Bash(python3.12:*)",
       "Bash(python3.13:*)",
       "Bash(python3:*)",
-      "Bash(python -m pytest:*)"
+      "Bash(python -m pytest:*)",
+      "Bash(tail:*)",
+      "Bash(.venv/bin/python:*)"
     ]
   }
 }
