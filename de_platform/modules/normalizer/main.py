@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.pipeline.currency import CurrencyConverter
 from de_platform.pipeline.dedup import EventDeduplicator
 from de_platform.pipeline.enrichment import (
@@ -51,7 +51,7 @@ _PERSISTENCE_TOPIC: dict[str, str] = {
 }
 
 
-class NormalizerModule(AsyncModule):
+class NormalizerModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -81,8 +81,11 @@ class NormalizerModule(AsyncModule):
     async def execute(self) -> int:
         self.log.info("Normalizer running")
         while not self.lifecycle.is_shutting_down:
-            self._poll_and_process(TRADE_NORMALIZATION, "trade")
-            self._poll_and_process(TX_NORMALIZATION, "transaction")
+            try:
+                self._poll_and_process(TRADE_NORMALIZATION, "trade")
+                self._poll_and_process(TX_NORMALIZATION, "transaction")
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
             await asyncio.sleep(0.01)
         return 0
 

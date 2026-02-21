@@ -13,7 +13,7 @@ test-e2e:
 	$(PYTEST) tests/e2e/ -v -m "not real_infra" --tb=short
 
 test-real-infra:
-	$(PYTEST) tests/e2e/ -v -m real_infra --tb=short -x
+	$(PYTEST) tests/e2e/ tests/integration/ -v -m real_infra --tb=short
 
 lint:
 	$(PYTHON) -m ruff check de_platform/
@@ -28,7 +28,7 @@ migrate:
 	$(PYTHON) -m de_platform migrate $(cmd) $(args)
 
 test-integration:
-	$(PYTEST) -v -k "postgres" --tb=short
+	$(PYTEST) tests/integration/ -v -m real_infra --tb=short
 
 local-unit: setup
 	.venv/bin/python -m pytest de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
@@ -37,7 +37,7 @@ local-e2e: setup
 	.venv/bin/python -m pytest tests/e2e/ -v -m "not real_infra" --tb=short
 
 local-e2e-infra: setup-full infra-up
-	.venv/bin/python -m pytest tests/e2e/ -v -m real_infra --tb=short -x
+	.venv/bin/python -m pytest tests/e2e/ tests/integration/ -v -m real_infra --tb=short
 
 infra-up:
 	docker compose -f .devcontainer/docker-compose.yml up -d postgres redis minio zookeeper kafka clickhouse

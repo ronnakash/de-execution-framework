@@ -45,15 +45,15 @@ class CurrencyLoaderModule(Module):
         self.db = db
         self.fs = fs
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.log = self.logger.create()
         self.rates_file: str = self.config.get("rates-file", "")
 
-    def validate(self) -> None:
+    async def validate(self) -> None:
         if not self.rates_file:
             raise ValueError("rates-file is required")
 
-    def execute(self) -> int:
+    async def execute(self) -> int:
         raw = self.fs.read(self.rates_file)
         rates = json.loads(raw.decode("utf-8"))
 

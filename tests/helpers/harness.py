@@ -275,7 +275,7 @@ class MemoryHarness:
         elif method == "kafka":
             await ingest_kafka_starter(self.mq, event_type, events)
         elif method == "files":
-            ingest_files_memory(self.fs, self.mq, event_type, events)
+            await ingest_files_memory(self.fs, self.mq, event_type, events)
         else:
             raise ValueError(f"Unknown method: {method!r}")
 
@@ -554,7 +554,7 @@ class ContainerHarness:
         elif method == "kafka":
             ingest_kafka_publish(self._kafka_producer, event_type, events)
         elif method == "files":
-            ingest_files_minio_with_kafka(
+            await ingest_files_minio_with_kafka(
                 self._minio_fs,
                 self._kafka_producer,
                 event_type,

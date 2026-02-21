@@ -47,14 +47,14 @@ class RunMigrationsModule(Module):
         self.logger = logger
         self.db = db
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.log = self.logger.create()
         self.db.connect()
 
-    def teardown(self) -> None:
+    async def teardown(self) -> None:
         self.db.disconnect()
 
-    def execute(self) -> int:
+    async def execute(self) -> int:
         direction = self.config.get("direction", "up")
         db_name = self.config.get("db-name", "warehouse")
         count = self.config.get("count", 1)

@@ -97,7 +97,7 @@ def ingest_kafka_publish(producer: Any, event_type: str, events: list[dict]) -> 
 # ── File ingestion ───────────────────────────────────────────────────────────
 
 
-def ingest_files_memory(
+async def ingest_files_memory(
     fs: Any, mq: Any, event_type: str, events: list[dict]
 ) -> None:
     """Write events to MemoryFileSystem and run FileProcessorModule inline."""
@@ -110,12 +110,12 @@ def ingest_files_memory(
         fs=fs,
         mq=mq,
     )
-    module.initialize()
-    module.validate()
-    module.execute()
+    await module.initialize()
+    await module.validate()
+    await module.execute()
 
 
-def ingest_files_minio_inline(
+async def ingest_files_minio_inline(
     minio_fs: Any, mq: Any, event_type: str, events: list[dict]
 ) -> None:
     """Write events to MinIO and run FileProcessorModule inline (real FS, memory MQ)."""
@@ -128,12 +128,12 @@ def ingest_files_minio_inline(
         fs=minio_fs,
         mq=mq,
     )
-    module.initialize()
-    module.validate()
-    module.execute()
+    await module.initialize()
+    await module.validate()
+    await module.execute()
 
 
-def ingest_files_minio_with_kafka(
+async def ingest_files_minio_with_kafka(
     minio_fs: Any,
     kafka_producer: Any,
     event_type: str,
@@ -160,7 +160,7 @@ def ingest_files_minio_with_kafka(
         fs=minio_fs,
         mq=fp_mq,
     )
-    fp.run()
+    await fp.run()
     fp_mq.disconnect()
 
 

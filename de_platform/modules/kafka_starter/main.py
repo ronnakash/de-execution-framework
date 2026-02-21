@@ -24,7 +24,7 @@ import uuid
 from typing import Any
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.pipeline.serialization import _now_iso, error_to_dict
 from de_platform.pipeline.topics import (
     NORMALIZATION_ERRORS,
@@ -38,7 +38,7 @@ from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 
 
-class KafkaStarterModule(AsyncModule):
+class KafkaStarterModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -70,10 +70,13 @@ class KafkaStarterModule(AsyncModule):
     async def execute(self) -> int:
         self.log.info("Kafka Starter running", topics=list(self._routes.keys()))
         while True:
-            for inbound_topic, (event_type, norm_topic) in self._routes.items():
-                msg = self.mq.consume_one(inbound_topic)
-                if msg is not None:
-                    self._process_message(event_type, norm_topic, msg)
+            try:
+                for inbound_topic, (event_type, norm_topic) in self._routes.items():
+                    msg = self.mq.consume_one(inbound_topic)
+                    if msg is not None:
+                        self._process_message(event_type, norm_topic, msg)
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
             if self.lifecycle.is_shutting_down:
                 break
             await asyncio.sleep(0.01)

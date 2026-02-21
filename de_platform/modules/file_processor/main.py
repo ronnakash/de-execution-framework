@@ -55,12 +55,12 @@ class FileProcessorModule(Module):
         self.fs = fs
         self.mq = mq
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.log = self.logger.create()
         self.file_path: str = self.config.get("file-path", "")
         self.event_type: str = self.config.get("event-type", "")
 
-    def validate(self) -> None:
+    async def validate(self) -> None:
         if not self.file_path:
             raise ValueError("file-path is required")
         if self.event_type not in _TOPIC_MAP:
@@ -68,7 +68,7 @@ class FileProcessorModule(Module):
                 f"event-type must be one of {list(_TOPIC_MAP)}, got {self.event_type!r}"
             )
 
-    def execute(self) -> int:
+    async def execute(self) -> int:
         raw_bytes = self.fs.read(self.file_path)
         events = _parse_events(raw_bytes)
 

@@ -33,7 +33,7 @@ from aiohttp import web
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.pipeline.topics import ALERTS
 from de_platform.services.database.factory import DatabaseFactory
 from de_platform.services.database.interface import DatabaseInterface
@@ -43,7 +43,7 @@ from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 
 
-class DataApiModule(AsyncModule):
+class DataApiModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -82,7 +82,10 @@ class DataApiModule(AsyncModule):
         self.log.info("Data API listening", port=self.port)
 
         while not self.lifecycle.is_shutting_down:
-            await self._consume_alerts()
+            try:
+                await self._consume_alerts()
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
             await asyncio.sleep(0.01)
 
         return 0

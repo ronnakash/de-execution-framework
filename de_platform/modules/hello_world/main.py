@@ -11,10 +11,10 @@ class HelloWorldModule(Module):
         self.config = config
         self.logger = logger
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         self.log = self.logger.create()
 
-    def execute(self) -> int:
+    async def execute(self) -> int:
         name = self.config.get("name")
         self.log.info(f"Hello, {name}!")
         return 0

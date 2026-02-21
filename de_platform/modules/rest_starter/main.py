@@ -30,7 +30,7 @@ from typing import Any
 from aiohttp import web
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.pipeline.serialization import dto_to_message, error_to_dict
 from de_platform.pipeline.topics import (
     NORMALIZATION_ERRORS,
@@ -51,7 +51,7 @@ _TOPIC_MAP: dict[str, str] = {
 }
 
 
-class RestStarterModule(AsyncModule):
+class RestStarterModule(Module):
     log: LoggingInterface
 
     def __init__(

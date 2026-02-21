@@ -18,7 +18,7 @@ import asyncio
 from typing import Any
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.pipeline.algorithms import (
     FraudAlgorithm,
     LargeNotionalAlgo,
@@ -34,7 +34,7 @@ from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 
 
-class AlgosModule(AsyncModule):
+class AlgosModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -75,10 +75,13 @@ class AlgosModule(AsyncModule):
     async def execute(self) -> int:
         self.log.info("Algos running")
         while not self.lifecycle.is_shutting_down:
-            for topic in [TRADES_ALGOS, TRANSACTIONS_ALGOS]:
-                msg = self.mq.consume_one(topic)
-                if msg:
-                    await self._evaluate(msg)
+            try:
+                for topic in [TRADES_ALGOS, TRANSACTIONS_ALGOS]:
+                    msg = self.mq.consume_one(topic)
+                    if msg:
+                        await self._evaluate(msg)
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
             await asyncio.sleep(0.01)
         return 0
 

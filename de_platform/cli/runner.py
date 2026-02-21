@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
-import inspect
 import json
 import sys
 from pathlib import Path
@@ -411,17 +411,9 @@ def run_module(argv: list[str]) -> tuple[int, Module]:
 
     # Service/worker modules get the full lifecycle treatment
     if module_type in _SERVICE_TYPES:
-        import asyncio
-
         exit_code = asyncio.run(_run_service_module(module_instance, container))
     else:
-        result = module_instance.run()
-        if inspect.iscoroutine(result):
-            import asyncio
-
-            exit_code = asyncio.run(result)
-        else:
-            exit_code = result
+        exit_code = asyncio.run(module_instance.run())
 
     return (exit_code, module_instance)
 

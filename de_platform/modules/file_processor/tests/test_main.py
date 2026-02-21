@@ -43,7 +43,7 @@ VALID_TX = {
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
-def _run(
+async def _run(
     file_path: str,
     event_type: str,
     data: bytes,
@@ -57,7 +57,7 @@ def _run(
         mq = MemoryQueue()
     config = ModuleConfig({"file-path": file_path, "event-type": event_type})
     module = FileProcessorModule(config, LoggerFactory(), fs, mq)
-    return module.run(), mq
+    return await module.run(), mq
 
 
 def _drain(mq: MemoryQueue, topic: str) -> list:
@@ -72,17 +72,17 @@ def _drain(mq: MemoryQueue, topic: str) -> list:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-def test_valid_file_publishes_all():
+async def test_valid_file_publishes_all():
     data = json.dumps([VALID_ORDER, VALID_ORDER]).encode()
-    rc, mq = _run("orders.json", "order", data)
+    rc, mq = await _run("orders.json", "order", data)
     assert rc == 0
     msgs = _drain(mq, TRADE_NORMALIZATION)
     assert len(msgs) == 2
 
 
-def test_orders_go_to_trade_normalization():
+async def test_orders_go_to_trade_normalization():
     data = json.dumps([VALID_ORDER]).encode()
-    rc, mq = _run("orders.json", "order", data)
+    rc, mq = await _run("orders.json", "order", data)
     assert rc == 0
     msg = mq.consume_one(TRADE_NORMALIZATION)
     assert msg is not None
@@ -92,36 +92,36 @@ def test_orders_go_to_trade_normalization():
     assert "ingested_at" in msg
 
 
-def test_executions_go_to_trade_normalization():
+async def test_executions_go_to_trade_normalization():
     data = json.dumps([VALID_EXECUTION]).encode()
-    rc, mq = _run("exec.json", "execution", data)
+    rc, mq = await _run("exec.json", "execution", data)
     assert rc == 0
     msg = mq.consume_one(TRADE_NORMALIZATION)
     assert msg is not None
     assert msg["event_type"] == "execution"
 
 
-def test_transactions_go_to_tx_normalization():
+async def test_transactions_go_to_tx_normalization():
     data = json.dumps([VALID_TX]).encode()
-    rc, mq = _run("tx.json", "transaction", data)
+    rc, mq = await _run("tx.json", "transaction", data)
     assert rc == 0
     msg = mq.consume_one(TX_NORMALIZATION)
     assert msg is not None
     assert msg["event_type"] == "transaction"
 
 
-def test_jsonl_format_parsed_correctly():
+async def test_jsonl_format_parsed_correctly():
     lines = "\n".join(json.dumps(VALID_ORDER) for _ in range(3))
-    rc, mq = _run("orders.jsonl", "order", lines.encode())
+    rc, mq = await _run("orders.jsonl", "order", lines.encode())
     assert rc == 0
     msgs = _drain(mq, TRADE_NORMALIZATION)
     assert len(msgs) == 3
 
 
-def test_file_with_errors_publishes_valid_and_errors_separately():
+async def test_file_with_errors_publishes_valid_and_errors_separately():
     bad = {**VALID_ORDER, "price": -1}
     data = json.dumps([VALID_ORDER, bad]).encode()
-    rc, mq = _run("orders.json", "order", data)
+    rc, mq = await _run("orders.json", "order", data)
     assert rc == 0
     valid_msgs = _drain(mq, TRADE_NORMALIZATION)
     err_msgs = _drain(mq, NORMALIZATION_ERRORS)
@@ -130,11 +130,11 @@ def test_file_with_errors_publishes_valid_and_errors_separately():
     assert err_msgs[0]["event_type"] == "order"
 
 
-def test_multi_field_invalid_event_produces_single_error_message():
+async def test_multi_field_invalid_event_produces_single_error_message():
     """An event with multiple validation failures produces exactly 1 error message."""
     bad = {**VALID_ORDER, "id": "", "currency": "x", "quantity": -5}
     data = json.dumps([bad]).encode()
-    rc, mq = _run("bad_orders.json", "order", data)
+    rc, mq = await _run("bad_orders.json", "order", data)
     assert rc == 0
 
     err_msgs = _drain(mq, NORMALIZATION_ERRORS)
@@ -143,14 +143,14 @@ def test_multi_field_invalid_event_produces_single_error_message():
     assert err_msgs[0]["event_type"] == "order"
 
 
-def test_empty_file_returns_zero_no_messages():
-    rc, mq = _run("empty.json", "order", b"")
+async def test_empty_file_returns_zero_no_messages():
+    rc, mq = await _run("empty.json", "order", b"")
     assert rc == 0
     assert mq.consume_one(TRADE_NORMALIZATION) is None
     assert mq.consume_one(NORMALIZATION_ERRORS) is None
 
 
-def test_invalid_event_type_raises_on_validate():
+async def test_invalid_event_type_raises_on_validate():
     from de_platform.modules.file_processor.main import FileProcessorModule
 
     fs = MemoryFileSystem()
@@ -159,18 +159,18 @@ def test_invalid_event_type_raises_on_validate():
         ModuleConfig({"file-path": "x.json", "event-type": "banana"}),
         LoggerFactory(), fs, MemoryQueue(),
     )
-    module.initialize()
+    await module.initialize()
     with pytest.raises(ValueError, match="event-type"):
-        module.validate()
+        await module.validate()
 
 
-def test_missing_file_path_raises():
+async def test_missing_file_path_raises():
     from de_platform.modules.file_processor.main import FileProcessorModule
 
     module = FileProcessorModule(
         ModuleConfig({"event-type": "order"}),
         LoggerFactory(), MemoryFileSystem(), MemoryQueue(),
     )
-    module.initialize()
+    await module.initialize()
     with pytest.raises(ValueError, match="file-path"):
-        module.validate()
+        await module.validate()

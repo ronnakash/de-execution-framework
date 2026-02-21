@@ -22,7 +22,7 @@ import uuid
 from typing import Any
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.modules.persistence.buffer import BufferKey, TenantBuffer
 from de_platform.pipeline.topics import (
     DUPLICATES,
@@ -47,7 +47,7 @@ _TOPIC_TABLE_MAP: list[tuple[str, str]] = [
 ]
 
 
-class PersistenceModule(AsyncModule):
+class PersistenceModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -87,18 +87,21 @@ class PersistenceModule(AsyncModule):
         assert self.buffer is not None
         self.log.info("Persistence running")
         while not self.lifecycle.is_shutting_down:
-            for topic, table in _TOPIC_TABLE_MAP:
-                msg = self.mq.consume_one(topic)
-                if msg:
-                    tenant_id = msg.get("tenant_id", "unknown")
-                    key = BufferKey(tenant_id=tenant_id, table=table)
-                    self.buffer.append(key, msg)
+            try:
+                for topic, table in _TOPIC_TABLE_MAP:
+                    msg = self.mq.consume_one(topic)
+                    if msg:
+                        tenant_id = msg.get("tenant_id", "unknown")
+                        key = BufferKey(tenant_id=tenant_id, table=table)
+                        self.buffer.append(key, msg)
+                        if self.buffer.should_flush(key):
+                            self._flush(key)
+                # Time-based flush check for all buffered keys
+                for key in self.buffer.all_keys():
                     if self.buffer.should_flush(key):
                         self._flush(key)
-            # Time-based flush check for all buffered keys
-            for key in self.buffer.all_keys():
-                if self.buffer.should_flush(key):
-                    self._flush(key)
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
             await asyncio.sleep(0.01)
         return 0
 
