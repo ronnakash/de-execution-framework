@@ -11,6 +11,11 @@
 11. our current e2e tests are mixing what I think sould be separate - algo and data logic. We should reorganize our tests such that algos related tests and data related tests are separated.
 12. we should also have e2e tests hit the UI and search for inserted events, alerts, ect
 13. I think there should be a service that is meant to keep track of incoming data, processed, errors, and duplicate counts and have that data accesible to the client. We should have per-file data if the client uploaded files, and per-day data for each of rest and kafka. They should also be different entries. The service will calculate the counts and store it in it's own dedicated postgresql database and the UI will query it in a dedicated page called data audit
+14. I want to have a comprehensive logging framework where we store all of the logs in a database (or something else) (clickhouse???) from all of the apps and be able to look at them and query them. We should add a lot of context to the events like what event is processed and for what tenant ect. I also want to have an internal UI where I can view the logs and filter them
+15. I want to add grafana dashboards for each service/module that give us essential data on processing time, event counts, which tenants data are we processing ect
+16. we need some task module scheduler/manager that stores all previous module runs (keep in mind that this applies to non-service modules and just for task runs, file-processor should count too). The idea is this - we can track previous task runs and see if they passed/failed, and be able to have scheduled runs. For example, schedule the fetching of currency rates every hour to currency service, or run algos for batch clients on a set time period (hour-wize, dates increment every time) at a configurable hour for the client. We should also be able to have some custom code per-task to fetch args for the runs
+17. client configuration should have algo run time
+18. client configuration should have available algos for the client
 
 
 write a detailed plan to implement the changes. We should have it executeable step-by-step and have some order that makes sense to do so
