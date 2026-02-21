@@ -12,3 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
+
+# The base Debian image ships a system Python 3.13 at /usr/bin/python3.13.
+# VS Code's test adapter discovers it and uses it for pytest discovery,
+# causing "No module named pytest" errors because deps are only installed
+# in the devcontainer Python 3.12 at /usr/local/bin/python3.
+# Remove the system Python 3.13 binary so VS Code can only find 3.12.
+RUN rm -f /usr/bin/python3.13 /bin/python3.13 \
+    && ln -sf /usr/local/bin/python3 /usr/bin/python3 \
+    && ln -sf /usr/local/bin/python3 /bin/python3
