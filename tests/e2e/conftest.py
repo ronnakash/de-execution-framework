@@ -37,26 +37,39 @@ class InfraConfig:
     minio_bucket: str
 
     def to_env_overrides(self, group_id: str = "test") -> dict[str, str]:
-        """Build env var dict for EnvSecrets / subprocess env."""
-        return {
+        """Build env var dict for EnvSecrets / subprocess env.
+
+        Includes env vars for all DB name prefixes used by modules:
+        - warehouse (normalizer), alerts (algos, data_api), events (data_api)
+        - clickhouse (persistence), currency (currency_loader)
+        """
+        ch_vars = {
+            "HOST": self.clickhouse_host,
+            "PORT": str(self.clickhouse_port),
+            "DATABASE": self.clickhouse_database,
+            "USER": self.clickhouse_user,
+            "PASSWORD": self.clickhouse_password,
+        }
+        result = {
+            # Postgres instances (all point to same server)
             "DB_WAREHOUSE_URL": self.postgres_url,
             "DB_ALERTS_URL": self.postgres_url,
             "DB_CURRENCY_URL": self.postgres_url,
-            "DB_EVENTS_URL": self.postgres_url,
-            "DB_CLICKHOUSE_HOST": self.clickhouse_host,
-            "DB_CLICKHOUSE_PORT": str(self.clickhouse_port),
-            "DB_CLICKHOUSE_DATABASE": self.clickhouse_database,
-            "DB_CLICKHOUSE_USER": self.clickhouse_user,
-            "DB_CLICKHOUSE_PASSWORD": self.clickhouse_password,
+            # ClickHouse instances (all point to same server)
+            **{f"DB_CLICKHOUSE_{k}": v for k, v in ch_vars.items()},
+            **{f"DB_EVENTS_{k}": v for k, v in ch_vars.items()},
+            # Redis, Kafka, MinIO
             "CACHE_REDIS_URL": self.redis_url,
             "MQ_KAFKA_BOOTSTRAP_SERVERS": self.kafka_bootstrap_servers,
             "MQ_KAFKA_GROUP_ID": group_id,
+            "MQ_KAFKA_POLL_TIMEOUT": "0.1",
             "FS_MINIO_ENDPOINT": self.minio_endpoint,
             "FS_MINIO_ACCESS_KEY": self.minio_access_key,
             "FS_MINIO_SECRET_KEY": self.minio_secret_key,
             "FS_MINIO_BUCKET": self.minio_bucket,
             "FS_MINIO_SECURE": "false",
         }
+        return result
 
 
 def _infra_config() -> InfraConfig:

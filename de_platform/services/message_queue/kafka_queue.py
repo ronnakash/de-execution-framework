@@ -68,7 +68,7 @@ class KafkaQueue(MessageQueueInterface):
             return value
 
         if self._consumer is None:
-            return None
+            self.connect()
 
         # 2. Auto-subscribe if needed
         if topic not in self._subscribed_topics:

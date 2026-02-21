@@ -1,0 +1,2 @@
+1. we are crashing services after we encounter too many failures; we should never crash them
+2. you added integration tests for the infra which is fine, but I want to have integration tests for the services themselves!! for example, data-persistence should test integration with ClickHouse, file-processor with minio, normalizer with redis, everything that uses postgres with postgres ect

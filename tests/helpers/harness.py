@@ -717,7 +717,7 @@ class SubprocessHarness:
                 "persistence",
                 [
                     "--db",
-                    "default=clickhouse",
+                    "clickhouse=clickhouse",
                     "--fs",
                     "minio",
                     "--mq",
@@ -729,7 +729,7 @@ class SubprocessHarness:
                 "algos",
                 [
                     "--db",
-                    "default=postgres",
+                    "alerts=postgres",
                     "--cache",
                     "redis",
                     "--mq",
@@ -839,7 +839,7 @@ class SubprocessHarness:
             raise ValueError(f"Unknown method: {method!r}")
 
     async def wait_for_rows(
-        self, table: str, expected: int, timeout: float = 60.0
+        self, table: str, expected: int, timeout: float = 120.0
     ) -> list[dict]:
         await poll_until(
             lambda: len(

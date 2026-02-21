@@ -284,11 +284,19 @@ def _build_container(
         factory = DatabaseFactory(db_configs)
         container.register_instance(DatabaseFactory, factory)
 
-        # Backward compat: also register DatabaseInterface pointing to default
+        # Also register DatabaseInterface as a singleton so modules that
+        # declare ``db: DatabaseInterface`` get it injected automatically.
+        # Priority: "default" entry > single named entry.
         from de_platform.services.database.interface import DatabaseInterface
 
+        singleton_name: str | None = None
         if "default" in db_configs:
-            db_instance = factory.get("default")
+            singleton_name = "default"
+        elif len(db_configs) == 1:
+            singleton_name = next(iter(db_configs))
+
+        if singleton_name is not None:
+            db_instance = factory.get(singleton_name)
             container.register_instance(DatabaseInterface, db_instance)
             # Register health check if this is a service/worker
             if module_type in _SERVICE_TYPES and container.has(HealthCheckServer):

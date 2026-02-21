@@ -81,8 +81,8 @@ class CurrencyLoaderModule(Module):
             self.log.info("No valid rate records found", path=self.rates_file)
             return 0
 
-        self.db.connect()
-        inserted = self.db.bulk_insert("currency_rates", valid_rows)
+        await self.db.connect_async()
+        inserted = await self.db.bulk_insert_async("currency_rates", valid_rows)
         self.log.info(
             "Currency rates loaded",
             path=self.rates_file,

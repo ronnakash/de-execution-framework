@@ -27,8 +27,22 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+from datetime import date, datetime
 
 from aiohttp import web
+
+
+def _json_default(obj: object) -> str:
+    """JSON serializer for types not handled by the default encoder."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _dumps(obj: object) -> str:
+    return json.dumps(obj, default=_json_default)
 
 _STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
@@ -135,14 +149,14 @@ class DataApiModule(Module):
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if severity:
             rows = [r for r in rows if r.get("severity") == severity]
-        return web.json_response(rows[offset : offset + limit])
+        return web.json_response(dumps=_dumps, data=rows[offset : offset + limit])
 
     async def _get_alert_by_id(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
         rows = await self.alerts_db.fetch_all_async("SELECT * FROM alerts")
         for row in rows:
             if row.get("alert_id") == alert_id:
-                return web.json_response(row)
+                return web.json_response(dumps=_dumps, data=row)
         raise web.HTTPNotFound(
             text=json.dumps({"error": "alert not found"}),
             content_type="application/json",
@@ -171,7 +185,7 @@ class DataApiModule(Module):
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
         if date:
             rows = [r for r in rows if r.get("transact_time", "").startswith(date)]
-        return web.json_response(rows[:limit])
+        return web.json_response(dumps=_dumps, data=rows[:limit])
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
