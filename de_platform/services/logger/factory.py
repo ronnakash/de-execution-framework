@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.logger.memory_logger import MemoryLogger
 from de_platform.services.logger.pretty_logger import PrettyLogger

@@ -7,6 +7,8 @@ Supports:
 - Inline comments after values are NOT stripped (to keep values predictable)
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 # Project root: two levels up from de_platform/config/
