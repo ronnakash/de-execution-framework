@@ -1,0 +1,12 @@
+{
+  "name": "auth",
+  "display_name": "Auth Service",
+  "description": "JWT authentication service with login, refresh, and user management",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {"name": "port", "type": "integer", "default": 8004, "required": false},
+    {"name": "access-token-ttl", "type": "integer", "default": 1800, "required": false},
+    {"name": "refresh-token-ttl", "type": "integer", "default": 604800, "required": false}
+  ]
+}

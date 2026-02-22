@@ -56,6 +56,7 @@ from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 from de_platform.services.metrics.interface import MetricsInterface
+from de_platform.services.secrets.interface import SecretsInterface
 
 
 class DataApiModule(Module):
@@ -69,6 +70,7 @@ class DataApiModule(Module):
         db_factory: DatabaseFactory,
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
+        secrets: SecretsInterface | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -76,6 +78,7 @@ class DataApiModule(Module):
         self.db_factory = db_factory
         self.lifecycle = lifecycle
         self.metrics = metrics
+        self.secrets = secrets
         self._runner: web.AppRunner | None = None
 
     async def initialize(self) -> None:
@@ -138,7 +141,13 @@ class DataApiModule(Module):
                 )
 
     def _create_app(self) -> web.Application:
-        app = web.Application()
+        middlewares: list = []
+        jwt_secret = self.secrets.get("JWT_SECRET") if self.secrets else None
+        if jwt_secret:
+            from de_platform.pipeline.auth_middleware import create_auth_middleware
+
+            middlewares.append(create_auth_middleware(jwt_secret))
+        app = web.Application(middlewares=middlewares)
         app.router.add_get("/api/v1/alerts", self._get_alerts)
         app.router.add_get("/api/v1/alerts/{alert_id}", self._get_alert_by_id)
         app.router.add_get("/api/v1/events/orders", self._get_orders)
@@ -151,9 +160,20 @@ class DataApiModule(Module):
 
     # ── Alert endpoints ───────────────────────────────────────────────────────
 
+    def _resolve_tenant_id(self, request: web.Request) -> str | None:
+        """Get tenant_id from JWT (if auth active) with admin override via query param."""
+        jwt_tenant = request.get("tenant_id")
+        query_tenant = request.rel_url.query.get("tenant_id")
+        if jwt_tenant:
+            # Admin users can query other tenants via ?tenant_id=
+            if request.get("role") == "admin" and query_tenant:
+                return query_tenant
+            return jwt_tenant
+        return query_tenant
+
     async def _get_alerts(self, request: web.Request) -> web.Response:
         self.metrics.counter("http_requests_total", tags={"service": "data_api", "endpoint": "/api/v1/alerts", "method": "GET"})
-        tenant_id = request.rel_url.query.get("tenant_id")
+        tenant_id = self._resolve_tenant_id(request)
         severity = request.rel_url.query.get("severity")
         limit = int(request.rel_url.query.get("limit", 50))
         offset = int(request.rel_url.query.get("offset", 0))
@@ -209,7 +229,7 @@ class DataApiModule(Module):
         self, request: web.Request, table: str
     ) -> web.Response:
         self.metrics.counter("http_requests_total", tags={"service": "data_api", "endpoint": f"/api/v1/events/{table}", "method": "GET"})
-        tenant_id = request.rel_url.query.get("tenant_id")
+        tenant_id = self._resolve_tenant_id(request)
         date = request.rel_url.query.get("date")
         limit = int(request.rel_url.query.get("limit", 50))
 

@@ -36,6 +36,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.metrics.interface import MetricsInterface
+from de_platform.services.secrets.interface import SecretsInterface
 
 
 def _json_default(obj: object) -> str:
@@ -61,6 +62,7 @@ class ClientConfigModule(Module):
         cache: CacheInterface,
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
+        secrets: SecretsInterface | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -68,6 +70,7 @@ class ClientConfigModule(Module):
         self.cache = cache
         self.lifecycle = lifecycle
         self.metrics = metrics
+        self.secrets = secrets
         self._runner: web.AppRunner | None = None
 
     async def initialize(self) -> None:
@@ -92,7 +95,13 @@ class ClientConfigModule(Module):
         return 0
 
     def _create_app(self) -> web.Application:
-        app = web.Application()
+        middlewares: list = []
+        jwt_secret = self.secrets.get("JWT_SECRET") if self.secrets else None
+        if jwt_secret:
+            from de_platform.pipeline.auth_middleware import create_auth_middleware
+
+            middlewares.append(create_auth_middleware(jwt_secret))
+        app = web.Application(middlewares=middlewares)
         app.router.add_get("/api/v1/clients", self._list_clients)
         app.router.add_get("/api/v1/clients/{tenant_id}", self._get_client)
         app.router.add_post("/api/v1/clients", self._create_client)
@@ -101,6 +110,30 @@ class ClientConfigModule(Module):
         app.router.add_get("/api/v1/clients/{tenant_id}/algos", self._get_algos)
         app.router.add_put("/api/v1/clients/{tenant_id}/algos/{algo}", self._update_algo)
         return app
+
+    # ── Auth helpers ──────────────────────────────────────────────────────
+
+    def _check_tenant_access(self, request: web.Request, tenant_id: str) -> web.Response | None:
+        """Return an error response if the user cannot access this tenant, else None."""
+        jwt_tenant = request.get("tenant_id")
+        if jwt_tenant and jwt_tenant != tenant_id and request.get("role") != "admin":
+            return web.Response(
+                status=403,
+                content_type="application/json",
+                text=json.dumps({"error": "Access denied to this tenant"}),
+            )
+        return None
+
+    def _require_admin(self, request: web.Request) -> web.Response | None:
+        """Return 403 if auth is active and user is not admin, else None."""
+        # Only enforce when auth middleware has set a role
+        if request.get("role") and request["role"] != "admin":
+            return web.Response(
+                status=403,
+                content_type="application/json",
+                text=json.dumps({"error": "Admin role required"}),
+            )
+        return None
 
     # ── Client endpoints ──────────────────────────────────────────────────
 
@@ -116,6 +149,9 @@ class ClientConfigModule(Module):
         self.metrics.counter("http_requests_total", tags={
             "service": "client_config", "endpoint": f"/api/v1/clients/{tenant_id}", "method": "GET",
         })
+        denied = self._check_tenant_access(request, tenant_id)
+        if denied:
+            return denied
         row = await self._find_client(tenant_id)
         if row is None:
             raise web.HTTPNotFound(
@@ -128,6 +164,9 @@ class ClientConfigModule(Module):
         self.metrics.counter("http_requests_total", tags={
             "service": "client_config", "endpoint": "/api/v1/clients", "method": "POST",
         })
+        denied = self._require_admin(request)
+        if denied:
+            return denied
         body = await request.json()
 
         tenant_id = body.get("tenant_id")
@@ -162,6 +201,12 @@ class ClientConfigModule(Module):
         self.metrics.counter("http_requests_total", tags={
             "service": "client_config", "endpoint": f"/api/v1/clients/{tenant_id}", "method": "PUT",
         })
+        denied = self._require_admin(request)
+        if denied:
+            return denied
+        denied = self._check_tenant_access(request, tenant_id)
+        if denied:
+            return denied
         existing = await self._find_client(tenant_id)
         if existing is None:
             raise web.HTTPNotFound(
@@ -192,6 +237,12 @@ class ClientConfigModule(Module):
         self.metrics.counter("http_requests_total", tags={
             "service": "client_config", "endpoint": f"/api/v1/clients/{tenant_id}", "method": "DELETE",
         })
+        denied = self._require_admin(request)
+        if denied:
+            return denied
+        denied = self._check_tenant_access(request, tenant_id)
+        if denied:
+            return denied
         existing = await self._find_client(tenant_id)
         if existing is None:
             raise web.HTTPNotFound(
@@ -225,6 +276,9 @@ class ClientConfigModule(Module):
         self.metrics.counter("http_requests_total", tags={
             "service": "client_config", "endpoint": f"/api/v1/clients/{tenant_id}/algos", "method": "GET",
         })
+        denied = self._check_tenant_access(request, tenant_id)
+        if denied:
+            return denied
         client = await self._find_client(tenant_id)
         if client is None:
             raise web.HTTPNotFound(
@@ -242,6 +296,12 @@ class ClientConfigModule(Module):
             "endpoint": f"/api/v1/clients/{tenant_id}/algos/{algo}",
             "method": "PUT",
         })
+        denied = self._require_admin(request)
+        if denied:
+            return denied
+        denied = self._check_tenant_access(request, tenant_id)
+        if denied:
+            return denied
         client = await self._find_client(tenant_id)
         if client is None:
             raise web.HTTPNotFound(

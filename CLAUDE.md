@@ -104,8 +104,9 @@ Fraud detection pipeline built on top of the framework:
 - **`enrichment.py`** — `enrich_trade_event()`, `enrich_transaction_event()`, `compute_primary_key()` (format: `{tenant}_{type}_{id}_{date}`)
 - **`algorithms.py`** — `FraudAlgorithm` ABC; built-ins: `LargeNotionalAlgo` (> $1M notional_usd), `VelocityAlgo` (rate via cache), `SuspiciousCounterpartyAlgo`. All accept optional `thresholds` dict in `evaluate()` for per-tenant overrides.
 - **`client_config_cache.py`** — `ClientConfigCache`: reads per-tenant config from Redis cache keys (`client_config:{tenant_id}`, `algo_config:{tenant_id}:{algo}`). Subscribes to `client_config_updates` pub-sub channel for real-time invalidation. Used by normalizer (mode gating) and algos (per-tenant thresholds).
+- **`auth_middleware.py`** — `create_auth_middleware()`: aiohttp middleware factory for JWT Bearer token verification. Shared by `auth`, `data_api`, and `client_config` modules. Also provides `encode_token()`, `hash_password()`, `verify_password()` helpers. **Conditional activation:** middleware only applied when `JWT_SECRET` env var is set — unit tests run without auth, production always sets it.
 
-**Pipeline modules:** `normalizer` (enrich + dedup, mode-gated algos forwarding), `persistence` (buffer → ClickHouse + filesystem), `algos` (fraud algorithms → alerts, per-tenant config), `data_api` (HTTP API + static UI at `/ui`), `currency_loader` (fetches rates into DB), `client_config` (REST API for per-tenant configuration — mode, algo thresholds, enabled algos)
+**Pipeline modules:** `normalizer` (enrich + dedup, mode-gated algos forwarding), `persistence` (buffer → ClickHouse + filesystem), `algos` (fraud algorithms → alerts, per-tenant config), `data_api` (HTTP API + static UI at `/ui`), `currency_loader` (fetches rates into DB), `client_config` (REST API for per-tenant configuration — mode, algo thresholds, enabled algos), `auth` (JWT authentication service — login, refresh, logout, user management)
 
 ### Testing Patterns (3-tier)
 
@@ -113,7 +114,7 @@ Fraud detection pipeline built on top of the framework:
 
 **Integration tests** (`tests/integration/`): individual modules tested against real infrastructure services. Two subdirs: `services/` (e.g. `test_postgres_database.py`) and `modules/` (e.g. `test_normalizer_redis.py`). Marked `@pytest.mark.integration`. Requires `make infra-up`.
 
-**E2E tests** (`tests/e2e/`): full pipeline — 7 module subprocesses, all infrastructure services, end-to-end message flow. Session-scoped `SharedPipeline` starts subprocesses once; each test gets a `RealInfraHarness` with unique `tenant_id` for data isolation. Marked `@pytest.mark.e2e`. Requires `make infra-up`.
+**E2E tests** (`tests/e2e/`): full pipeline — 8 module subprocesses, all infrastructure services, end-to-end message flow. Session-scoped `SharedPipeline` starts subprocesses once; each test gets a `RealInfraHarness` with unique `tenant_id` for data isolation. Marked `@pytest.mark.e2e`. Requires `make infra-up`.
 
 **Test helpers** (`tests/helpers/`): `PipelineHarness` protocol and implementations (`MemoryHarness`, `SharedPipeline`, `RealInfraHarness`) in `harness.py`. 10 shared scenarios in `scenarios.py`. Event factories in `events.py`. Ingestion helpers in `ingestion.py`.
 

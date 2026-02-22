@@ -57,6 +57,7 @@ class InfraConfig:
             "DB_ALERTS_URL": self.postgres_url,
             "DB_CURRENCY_URL": self.postgres_url,
             "DB_CLIENT_CONFIG_URL": self.postgres_url,
+            "DB_AUTH_URL": self.postgres_url,
             # ClickHouse instances (all point to same server)
             **{f"DB_CLICKHOUSE_{k}": v for k, v in ch_vars.items()},
             **{f"DB_EVENTS_{k}": v for k, v in ch_vars.items()},
@@ -71,6 +72,8 @@ class InfraConfig:
             "FS_MINIO_SECRET_KEY": self.minio_secret_key,
             "FS_MINIO_BUCKET": self.minio_bucket,
             "FS_MINIO_SECURE": "false",
+            # Auth
+            "JWT_SECRET": "e2e-test-jwt-secret-at-least-32-bytes-long",
         }
         return result
 
@@ -174,6 +177,7 @@ def _run_schema_init(request: Any) -> None:
     MigrationRunner(pg_db, db_name="warehouse").up()
     MigrationRunner(pg_db, db_name="alerts").up()
     MigrationRunner(pg_db, db_name="client_config").up()
+    MigrationRunner(pg_db, db_name="auth").up()
     asyncio.get_event_loop().run_until_complete(pg_db.disconnect_async())
 
     # ClickHouse: execute init SQL
@@ -197,6 +201,7 @@ def _run_schema_init(request: Any) -> None:
     pg_db2 = PostgresDatabase(secrets=pg_secrets, prefix="DB_WAREHOUSE")
     asyncio.get_event_loop().run_until_complete(pg_db2.connect_async())
     _seed_currency_rates(pg_db2)
+    _seed_auth_data(pg_db2)
     asyncio.get_event_loop().run_until_complete(pg_db2.disconnect_async())
 
     # Kafka: ensure topics exist with enough partitions for parallel tests
@@ -283,6 +288,26 @@ def _seed_currency_rates(db: Any) -> None:
         db.bulk_insert("currency_rates", rates)
     except Exception:
         pass  # rates may already exist
+
+
+def _seed_auth_data(db: Any) -> None:
+    """Insert a test tenant and admin user for E2E tests."""
+    from de_platform.pipeline.auth_middleware import hash_password
+
+    try:
+        db.insert_one("tenants", {
+            "tenant_id": "e2e_tenant",
+            "name": "E2E Test Tenant",
+        })
+        db.insert_one("users", {
+            "user_id": "e2e_admin",
+            "tenant_id": "e2e_tenant",
+            "email": "admin@e2e.test",
+            "password_hash": hash_password("e2e_password"),
+            "role": "admin",
+        })
+    except Exception:
+        pass  # data may already exist
 
 
 # ── Session-scoped shared pipeline ──────────────────────────────────────────
