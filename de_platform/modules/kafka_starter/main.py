@@ -105,13 +105,18 @@ class KafkaStarterModule(Module):
             msg["message_id"] = uuid.uuid4().hex
             msg["ingested_at"] = _now_iso()
             msg["event_type"] = event_type
-            self.mq.publish(norm_topic, msg)
+            tenant_id = msg.get("tenant_id", "")
+            symbol = msg.get("symbol", "")
+            msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
+            self.mq.publish(norm_topic, msg, key=msg_key)
 
         for event_index, event_errors in group_errors_by_event(errors).items():
             raw_event = events[event_index] if event_index < len(events) else {}
             err_msg = error_to_dict(raw_event, event_type, event_errors)
-            self.mq.publish(NORMALIZATION_ERRORS, err_msg)
-            self.mq.publish(self.client_errors_topic, err_msg)
+            tenant_id = raw_event.get("tenant_id", "")
+            msg_key = f"{tenant_id}:" if tenant_id else None
+            self.mq.publish(NORMALIZATION_ERRORS, err_msg, key=msg_key)
+            self.mq.publish(self.client_errors_topic, err_msg, key=msg_key)
 
         if valid:
             self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "kafka_starter", "event_type": event_type, "method": "kafka"})

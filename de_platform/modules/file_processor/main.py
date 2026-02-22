@@ -97,12 +97,17 @@ class FileProcessorModule(Module):
             msg["message_id"] = uuid.uuid4().hex
             msg["ingested_at"] = _now_iso()
             msg["event_type"] = self.event_type
-            self.mq.publish(topic, msg)
+            tenant_id = msg.get("tenant_id", "")
+            symbol = msg.get("symbol", "")
+            msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
+            self.mq.publish(topic, msg, key=msg_key)
 
         for event_index, event_errors in group_errors_by_event(errors).items():
             raw_event = events[event_index] if event_index < len(events) else {}
             err_msg = error_to_dict(raw_event, self.event_type, event_errors)
-            self.mq.publish(NORMALIZATION_ERRORS, err_msg)
+            tenant_id = raw_event.get("tenant_id", "")
+            msg_key = f"{tenant_id}:" if tenant_id else None
+            self.mq.publish(NORMALIZATION_ERRORS, err_msg, key=msg_key)
 
         self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "file_processor", "event_type": self.event_type, "method": "file"})
         if errors:

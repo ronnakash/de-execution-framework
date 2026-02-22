@@ -132,17 +132,22 @@ class RestStarterModule(Module):
 
         valid, errors = validate_events(event_type, events)
 
-        # Publish valid events
+        # Publish valid events (keyed by tenant_id:symbol for ordering)
         topic = _TOPIC_MAP[event_type]
         for raw in valid:
             msg = dto_to_message_from_raw(raw, event_type)
-            self.mq.publish(topic, msg)
+            tenant_id = msg.get("tenant_id", "")
+            symbol = msg.get("symbol", "")
+            msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
+            self.mq.publish(topic, msg, key=msg_key)
 
         # Publish one consolidated error message per invalid event
         for event_index, event_errors in group_errors_by_event(errors).items():
             raw_event = events[event_index] if event_index < len(events) else {}
             err_msg = error_to_dict(raw_event, event_type, event_errors)
-            self.mq.publish(NORMALIZATION_ERRORS, err_msg)
+            tenant_id = raw_event.get("tenant_id", "")
+            msg_key = f"{tenant_id}:" if tenant_id else None
+            self.mq.publish(NORMALIZATION_ERRORS, err_msg, key=msg_key)
 
         # Deduplicate error indices for response
         rejected_indices = {e.event_index for e in errors}

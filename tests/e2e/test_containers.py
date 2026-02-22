@@ -1,7 +1,7 @@
-"""Real-infra E2E tests via ContainerHarness.
+"""Real-infra E2E tests (container-style).
 
-All 6 pipeline modules run as concurrent asyncio tasks with real Postgres,
-ClickHouse, Redis, Kafka, and MinIO (via docker-compose).
+All tests run against a single shared pipeline of 6 module subprocesses
+with real Postgres, ClickHouse, Redis, Kafka, and MinIO (via docker-compose).
 
 34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
 
@@ -13,23 +13,21 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers.events import FULL_MATRIX
-from tests.helpers.harness import ContainerHarness
+from tests.helpers.harness import RealInfraHarness
 from tests.helpers import scenarios
 
 pytestmark = [pytest.mark.real_infra]
 
 
 @pytest.fixture
-async def harness(infra):
-    async with ContainerHarness(infra) as h:
+async def harness(shared_pipeline):
+    async with RealInfraHarness(shared_pipeline) as h:
         yield h
 
 
 @pytest.fixture
-async def harness_suspicious_cp(infra):
-    async with ContainerHarness(
-        infra, algos_config={"suspicious-counterparty-ids": "bad-cp-1"}
-    ) as h:
+async def harness_suspicious_cp(shared_pipeline):
+    async with RealInfraHarness(shared_pipeline) as h:
         yield h
 
 

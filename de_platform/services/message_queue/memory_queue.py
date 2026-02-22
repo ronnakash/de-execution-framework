@@ -13,7 +13,7 @@ class MemoryQueue(MessageQueueInterface):
         self._topics: dict[str, deque[Any]] = {}
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
 
-    def publish(self, topic: str, message: Any) -> None:
+    def publish(self, topic: str, message: Any, key: str | None = None) -> None:
         if topic not in self._topics:
             self._topics[topic] = deque()
         self._topics[topic].append(message)

@@ -21,6 +21,9 @@ class KafkaQueue(MessageQueueInterface):
         self._offset_reset = secrets.get_or_default(
             "MQ_KAFKA_AUTO_OFFSET_RESET", "earliest"
         )
+        self._initial_topics = secrets.get_or_default(
+            "MQ_KAFKA_SUBSCRIBE_TOPICS", ""
+        )
         self._producer: Any = None
         self._consumer: Any = None
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
@@ -36,6 +39,13 @@ class KafkaQueue(MessageQueueInterface):
             "group.id": self._group_id,
             "auto.offset.reset": self._offset_reset,
         })
+        # Pre-subscribe to all topics at once to avoid incremental rebalances
+        # (each subscribe() call triggers a group rebalance; batching them into
+        # a single subscribe avoids the rebalance storm).
+        if self._initial_topics:
+            topics = [t.strip() for t in self._initial_topics.split(",") if t.strip()]
+            self._subscribed_topics.update(topics)
+            self._consumer.subscribe(list(self._subscribed_topics))
 
     def disconnect(self) -> None:
         if self._producer:
@@ -45,11 +55,12 @@ class KafkaQueue(MessageQueueInterface):
             self._consumer.close()
             self._consumer = None
 
-    def publish(self, topic: str, message: Any) -> None:
+    def publish(self, topic: str, message: Any, key: str | None = None) -> None:
         if self._producer is None:
             self.connect()
         payload = json.dumps(message).encode("utf-8")
-        self._producer.produce(topic, value=payload)
+        key_bytes = key.encode("utf-8") if key else None
+        self._producer.produce(topic, value=payload, key=key_bytes)
         self._producer.flush()
 
     def subscribe(self, topic: str, handler: Callable[[Any], None]) -> None:

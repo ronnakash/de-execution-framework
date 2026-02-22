@@ -100,6 +100,8 @@ class NormalizerModule(Module):
         event_type: str = msg.get("event_type", "order")
         tenant_id: str = msg.get("tenant_id", "")
         message_id: str = msg.get("message_id", "")
+        symbol: str = msg.get("symbol", "")
+        msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
         tags = {"service": "normalizer", "event_type": event_type, "tenant_id": tenant_id}
 
         self.metrics.counter("events_received_total", tags={"service": "normalizer", "topic": topic})
@@ -142,21 +144,21 @@ class NormalizerModule(Module):
                 "received_at": now_iso(),
                 "original_event": msg,
             }
-            self.mq.publish(DUPLICATES, dup_record)
+            self.mq.publish(DUPLICATES, dup_record, key=msg_key)
             return
 
         normalized_at = now_iso()
         if category == "trade":
             enriched = enrich_trade_event(msg, self.currency_converter, normalized_at)
             persistence_topic = _PERSISTENCE_TOPIC.get(event_type, ORDERS_PERSISTENCE)
-            self.mq.publish(persistence_topic, enriched)
-            self.mq.publish(TRADES_ALGOS, enriched)
+            self.mq.publish(persistence_topic, enriched, key=msg_key)
+            self.mq.publish(TRADES_ALGOS, enriched, key=msg_key)
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": persistence_topic})
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRADES_ALGOS})
         else:
             enriched = enrich_transaction_event(msg, self.currency_converter, normalized_at)
-            self.mq.publish(TRANSACTIONS_PERSISTENCE, enriched)
-            self.mq.publish(TRANSACTIONS_ALGOS, enriched)
+            self.mq.publish(TRANSACTIONS_PERSISTENCE, enriched, key=msg_key)
+            self.mq.publish(TRANSACTIONS_ALGOS, enriched, key=msg_key)
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRANSACTIONS_PERSISTENCE})
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRANSACTIONS_ALGOS})
 

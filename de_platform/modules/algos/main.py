@@ -103,7 +103,8 @@ class AlgosModule(Module):
             alert = algo.evaluate(event)
             if alert:
                 alert_dict = alert.to_dict()
-                self.mq.publish(ALERTS, alert_dict)
+                msg_key = f"{tenant_id}:{event_id}" if tenant_id else None
+                self.mq.publish(ALERTS, alert_dict, key=msg_key)
                 # Postgres TIMESTAMP needs datetime, not ISO string
                 db_row = dict(alert_dict)
                 if isinstance(db_row.get("created_at"), str):

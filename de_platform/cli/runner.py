@@ -343,6 +343,17 @@ def _build_container(
 
         container.register_instance(MetricsInterface, NoopMetrics())
 
+    # 9. Wrap DatabaseInterface with observability (timing histograms by caller)
+    from de_platform.services.database.interface import DatabaseInterface as _DBI
+
+    if container.has(_DBI):
+        from de_platform.services.database.observable_database import ObservableDatabase
+
+        raw_db = container._registry[_DBI]
+        if not isinstance(raw_db, ObservableDatabase):
+            wrapped = ObservableDatabase(raw_db, container._registry[MetricsInterface])
+            container.register_instance(_DBI, wrapped)
+
     return container
 
 

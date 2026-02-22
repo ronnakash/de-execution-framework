@@ -13,6 +13,13 @@ class CacheInterface(ABC):
     @abstractmethod
     def set(self, key: str, value: Any, ttl: int | None = None) -> None: ...
 
+    def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Set key only if it does not exist. Returns True if set, False if key existed."""
+        if self.get(key) is not None:
+            return False
+        self.set(key, value, ttl=ttl)
+        return True
+
     @abstractmethod
     def delete(self, key: str) -> bool: ...
 

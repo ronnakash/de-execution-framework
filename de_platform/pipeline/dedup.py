@@ -31,16 +31,23 @@ class EventDeduplicator:
             "external_duplicate" — new message_id for existing primary_key (send to duplicates topic)
         """
         cache_key = f"{_DEDUP_PREFIX}{primary_key}"
-        cached: list[str] | None = self.cache.get(cache_key)
 
-        if cached is None:
-            self.cache.set(cache_key, [message_id], ttl=_DEDUP_TTL)
+        # Atomic set-if-not-exists: only one caller wins the race
+        if self.cache.set_nx(cache_key, [message_id], ttl=_DEDUP_TTL):
             return "new"
 
-        if message_id in cached:
+        # Key exists — check if internal or external duplicate
+        cached: list[str] | None = self.cache.get(cache_key)
+        if cached is None:
+            # Key expired between set_nx and get — treat as new
+            if self.cache.set_nx(cache_key, [message_id], ttl=_DEDUP_TTL):
+                return "new"
+            cached = self.cache.get(cache_key)
+
+        if cached is not None and message_id in cached:
             return "internal_duplicate"
 
         # External duplicate — add message_id and retain only the last _MAX_IDS
-        updated = cached + [message_id]
+        updated = (cached or []) + [message_id]
         self.cache.set(cache_key, updated[-_MAX_IDS:], ttl=_DEDUP_TTL)
         return "external_duplicate"

@@ -1,7 +1,8 @@
-"""Subprocess E2E tests via SubprocessHarness.
+"""Subprocess E2E tests via shared pipeline.
 
-The most production-realistic test suite: each pipeline module runs as a
-separate OS subprocess via ``python3 -m de_platform run <module> ...``.
+All tests run against a single shared pipeline of 6 module subprocesses
+(the most production-realistic mode) with real Postgres, ClickHouse,
+Redis, Kafka, and MinIO (via docker-compose).
 
 34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
 
@@ -13,23 +14,21 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers.events import FULL_MATRIX
-from tests.helpers.harness import SubprocessHarness
+from tests.helpers.harness import RealInfraHarness
 from tests.helpers import scenarios
 
 pytestmark = [pytest.mark.real_infra]
 
 
 @pytest.fixture
-async def harness(infra):
-    async with SubprocessHarness(infra) as h:
+async def harness(shared_pipeline):
+    async with RealInfraHarness(shared_pipeline) as h:
         yield h
 
 
 @pytest.fixture
-async def harness_suspicious_cp(infra):
-    async with SubprocessHarness(
-        infra, algos_extra=["--suspicious-counterparty-ids", "bad-cp-1"]
-    ) as h:
+async def harness_suspicious_cp(shared_pipeline):
+    async with RealInfraHarness(shared_pipeline) as h:
         yield h
 
 

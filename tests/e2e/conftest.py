@@ -7,6 +7,7 @@ otherwise defaults to localhost.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import uuid
 from dataclasses import dataclass
@@ -62,7 +63,7 @@ class InfraConfig:
             "CACHE_REDIS_URL": self.redis_url,
             "MQ_KAFKA_BOOTSTRAP_SERVERS": self.kafka_bootstrap_servers,
             "MQ_KAFKA_GROUP_ID": group_id,
-            "MQ_KAFKA_POLL_TIMEOUT": "0.1",
+            "MQ_KAFKA_POLL_TIMEOUT": "0.01",
             "MQ_KAFKA_AUTO_OFFSET_RESET": "latest",
             "FS_MINIO_ENDPOINT": self.minio_endpoint,
             "FS_MINIO_ACCESS_KEY": self.minio_access_key,
@@ -119,10 +120,12 @@ def infra() -> InfraConfig:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _init_schemas(request) -> None:
+def _init_schemas(request, tmp_path_factory) -> None:
     """Create Postgres tables (via migrations) and ClickHouse tables once per session.
 
     Only runs when at least one test in the session is marked with ``real_infra``.
+    Uses a file lock to ensure only one xdist worker performs initialization;
+    other workers wait for completion.
     """
     has_real_infra = any(
         item.get_closest_marker("real_infra") for item in request.session.items
@@ -133,6 +136,26 @@ def _init_schemas(request) -> None:
     pytest.importorskip("asyncpg")
     pytest.importorskip("clickhouse_connect")
 
+    # Use a file lock to ensure schema init runs only once across xdist workers.
+    # tmp_path_factory.getbasetemp() returns a shared base when using xdist.
+    lock_dir = tmp_path_factory.getbasetemp().parent if hasattr(tmp_path_factory, "getbasetemp") else Path(os.environ.get("TMPDIR", "/tmp"))
+    lock_file = lock_dir / "de_platform_schema_init.lock"
+    done_file = lock_dir / "de_platform_schema_init.done"
+
+    with open(lock_file, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            if done_file.exists():
+                # Another worker already completed init
+                return
+            _run_schema_init(request)
+            done_file.write_text("done")
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
+def _run_schema_init(request: Any) -> None:
+    """Perform the actual schema initialization (called under file lock)."""
     infra: InfraConfig = request.getfixturevalue("infra")
 
     from de_platform.migrations.runner import MigrationRunner
@@ -173,6 +196,78 @@ def _init_schemas(request) -> None:
     _seed_currency_rates(pg_db2)
     asyncio.get_event_loop().run_until_complete(pg_db2.disconnect_async())
 
+    # Kafka: ensure topics exist with enough partitions for parallel tests
+    _ensure_kafka_topics(infra)
+
+
+def _ensure_kafka_topics(infra: InfraConfig) -> None:
+    """Pre-create pipeline Kafka topics with enough partitions for parallel tests.
+
+    With shared consumer groups across test instances, we need enough partitions
+    so that each consumer gets at least one partition. Messages keyed by
+    tenant_id:symbol hash to partitions, giving each test's data its own partition.
+    """
+    from confluent_kafka.admin import AdminClient, NewTopic
+
+    from de_platform.pipeline.topics import (
+        ALERTS,
+        DUPLICATES,
+        EXECUTIONS_PERSISTENCE,
+        NORMALIZATION_ERRORS,
+        ORDERS_PERSISTENCE,
+        TRADE_NORMALIZATION,
+        TRADES_ALGOS,
+        TRANSACTIONS_ALGOS,
+        TRANSACTIONS_PERSISTENCE,
+        TX_NORMALIZATION,
+    )
+
+    admin = AdminClient({"bootstrap.servers": infra.kafka_bootstrap_servers})
+    num_partitions = 3
+
+    # Get existing topics
+    metadata = admin.list_topics(timeout=10)
+    existing = set(metadata.topics.keys())
+
+    all_topics = [
+        TRADE_NORMALIZATION, TX_NORMALIZATION,
+        NORMALIZATION_ERRORS, DUPLICATES,
+        ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
+        TRADES_ALGOS, TRANSACTIONS_ALGOS,
+        ALERTS,
+    ]
+
+    # Create missing topics
+    to_create = [
+        NewTopic(t, num_partitions=num_partitions, replication_factor=1)
+        for t in all_topics
+        if t not in existing
+    ]
+    if to_create:
+        futures = admin.create_topics(to_create)
+        for topic, future in futures.items():
+            try:
+                future.result()
+            except Exception:
+                pass  # topic may already exist from a concurrent worker
+
+    # Increase partitions on existing topics that have fewer than needed
+    from confluent_kafka.admin import NewPartitions
+
+    to_increase = []
+    for t in all_topics:
+        if t in existing:
+            topic_meta = metadata.topics[t]
+            if len(topic_meta.partitions) < num_partitions:
+                to_increase.append(NewPartitions(t, num_partitions))
+    if to_increase:
+        futures = admin.create_partitions(to_increase)
+        for topic, future in futures.items():
+            try:
+                future.result()
+            except Exception:
+                pass  # may already have enough partitions
+
 
 def _seed_currency_rates(db: Any) -> None:
     """Insert standard currency rates for tests."""
@@ -198,6 +293,32 @@ def _cleanup_between_tests(request) -> None:
     different tests never interferes. Kafka consumers use auto.offset.reset=latest
     with unique consumer groups, so stale messages are never replayed.
     """
+
+
+# ── Session-scoped shared pipeline ──────────────────────────────────────────
+
+
+@pytest.fixture(scope="session")
+def shared_pipeline(request, infra, tmp_path_factory):
+    """Session-scoped shared pipeline for real-infra tests.
+
+    Starts 6 module subprocesses once and shares them across all tests.
+    Only activates when at least one test is marked with ``real_infra``.
+    """
+    has_real_infra = any(
+        item.get_closest_marker("real_infra") for item in request.session.items
+    )
+    if not has_real_infra:
+        yield None
+        return
+
+    from tests.helpers.harness import SharedPipeline
+
+    lock_dir = tmp_path_factory.getbasetemp()
+    pipeline = SharedPipeline(infra, lock_dir)
+    pipeline.start()
+    yield pipeline
+    pipeline.close()
 
 
 # ── Per-test Kafka isolation ─────────────────────────────────────────────────

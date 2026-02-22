@@ -22,7 +22,11 @@ from de_platform.services.metrics.noop_metrics import NoopMetrics
 pytestmark = pytest.mark.real_infra
 
 
-def _make_order(tenant_id: str = "integ-test") -> dict:
+def _unique_tenant() -> str:
+    return f"INTEG_TEST_{uuid.uuid4().hex[:8]}"
+
+
+def _make_order(tenant_id: str) -> dict:
     uid = uuid.uuid4().hex[:8]
     return {
         "id": f"ord-{uid}",
@@ -41,11 +45,11 @@ def _make_order(tenant_id: str = "integ-test") -> dict:
         "notional_usd": 15000.0,
         "ingested_at": "2026-01-15T10:00:00+00:00",
         "normalized_at": "2026-01-15T10:00:01+00:00",
-        "primary_key": f"integ-test_order_{uid}_2026-01-15",
+        "primary_key": f"{tenant_id}_order_{uid}_2026-01-15",
     }
 
 
-def _make_error(tenant_id: str = "integ-test") -> dict:
+def _make_error(tenant_id: str) -> dict:
     return {
         "event_type": "order",
         "tenant_id": tenant_id,
@@ -59,6 +63,7 @@ async def test_persistence_flush_orders_to_clickhouse(clickhouse_db, kafka_mq):
     """PersistenceModule flushes buffered orders to ClickHouse."""
     from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 
+    tenant = _unique_tenant()
     module = PersistenceModule(
         config=ModuleConfig({"flush-threshold": 1, "flush-interval": 0}),
         logger=LoggerFactory(default_impl="memory"),
@@ -71,24 +76,25 @@ async def test_persistence_flush_orders_to_clickhouse(clickhouse_db, kafka_mq):
     await module.initialize()
 
     # Manually buffer and flush
-    orders = [_make_order() for _ in range(5)]
-    key = BufferKey(tenant_id="integ-test", table="orders")
+    orders = [_make_order(tenant) for _ in range(5)]
+    key = BufferKey(tenant_id=tenant, table="orders")
     for order in orders:
         module.buffer.append(key, order)
     module._flush(key)
 
     rows = clickhouse_db.fetch_all("SELECT * FROM orders")
-    assert len(rows) >= 5
-    for row in rows:
-        if row["tenant_id"] == "integ-test":
-            assert "primary_key" in row
-            assert row["symbol"] == "AAPL"
+    my_rows = [r for r in rows if r.get("tenant_id") == tenant]
+    assert len(my_rows) == 5
+    for row in my_rows:
+        assert "primary_key" in row
+        assert row["symbol"] == "AAPL"
 
 
 async def test_persistence_flush_errors_to_clickhouse(clickhouse_db, kafka_mq):
     """PersistenceModule flushes normalization errors (with JSON fields) to ClickHouse."""
     from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 
+    tenant = _unique_tenant()
     module = PersistenceModule(
         config=ModuleConfig({"flush-threshold": 1, "flush-interval": 0}),
         logger=LoggerFactory(default_impl="memory"),
@@ -100,12 +106,12 @@ async def test_persistence_flush_errors_to_clickhouse(clickhouse_db, kafka_mq):
     )
     await module.initialize()
 
-    errors = [_make_error() for _ in range(3)]
-    key = BufferKey(tenant_id="integ-test", table="normalization_errors")
+    errors = [_make_error(tenant) for _ in range(3)]
+    key = BufferKey(tenant_id=tenant, table="normalization_errors")
     for err in errors:
         module.buffer.append(key, err)
     module._flush(key)
 
     rows = clickhouse_db.fetch_all("SELECT * FROM normalization_errors")
-    integ_rows = [r for r in rows if r.get("tenant_id") == "integ-test"]
-    assert len(integ_rows) >= 3
+    my_rows = [r for r in rows if r.get("tenant_id") == tenant]
+    assert len(my_rows) == 3

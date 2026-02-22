@@ -46,6 +46,14 @@ class RedisCache(CacheInterface):
         else:
             client.set(key, raw)
 
+    def set_nx(self, key: str, value: Any, ttl: int | None = None) -> bool:
+        """Atomically set key only if it does not exist."""
+        raw = json.dumps(value).encode("utf-8")
+        client = self._ensure_connected()
+        if ttl is not None:
+            return bool(client.set(key, raw, nx=True, ex=ttl))
+        return bool(client.set(key, raw, nx=True))
+
     def delete(self, key: str) -> bool:
         return self._ensure_connected().delete(key) > 0
 
