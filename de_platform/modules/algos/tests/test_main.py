@@ -7,6 +7,7 @@ MemoryQueue + MemoryDatabase + MemoryCache.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import pytest
 
@@ -17,7 +18,7 @@ from de_platform.pipeline.algorithms import (
     SuspiciousCounterpartyAlgo,
     VelocityAlgo,
 )
-from de_platform.pipeline.topics import ALERTS, TRADES_ALGOS, TRANSACTIONS_ALGOS
+from de_platform.pipeline.topics import ALERTS
 from de_platform.services.cache.memory_cache import MemoryCache
 from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
@@ -64,14 +65,14 @@ async def _setup_module() -> tuple[AlgosModule, MemoryQueue, MemoryDatabase]:
     config = ModuleConfig({})
 
     module = AlgosModule(
-        config=config, logger=logger, mq=mq, db=db, cache=cache, lifecycle=lifecycle,
+        config=config, logger=logger, mq=mq, cache=cache, lifecycle=lifecycle,
         metrics=NoopMetrics(),
     )
     await module.initialize()
     return module, mq, db
 
 
-# ── Algorithm unit tests ──────────────────────────────────────────────────────
+# ── Algorithm unit tests (evaluate_window) ───────────────────────────────────
 
 
 def test_large_notional_triggers_alert() -> None:
@@ -87,17 +88,37 @@ def test_normal_notional_no_alert() -> None:
     assert algo.evaluate(_make_trade_event(notional_usd=500_000)) is None
 
 
+def test_large_notional_window_multiple_alerts() -> None:
+    algo = LargeNotionalAlgo(threshold_usd=1_000_000)
+    events = [
+        _make_trade_event(notional_usd=2_000_000),
+        _make_trade_event(notional_usd=3_000_000),
+        _make_trade_event(notional_usd=500_000),
+    ]
+    alerts = algo.evaluate_window(
+        events, "t1", datetime.min, datetime.max,
+    )
+    assert len(alerts) == 2
+    assert all(a.algorithm == "large_notional" for a in alerts)
+
+
 def test_velocity_check_triggers_on_burst() -> None:
-    cache = MemoryCache()
-    algo = VelocityAlgo(cache=cache, max_events=5, window_seconds=60)
-    event = _make_trade_event()
+    algo = VelocityAlgo(max_events=5, window_seconds=60)
+    events = [_make_trade_event() for _ in range(6)]
+    alerts = algo.evaluate_window(
+        events, "t1", datetime.min, datetime.max,
+    )
+    assert len(alerts) == 1
+    assert alerts[0].algorithm == "velocity"
 
-    for _ in range(5):
-        assert algo.evaluate(event) is None  # under threshold
 
-    alert = algo.evaluate(event)  # 6th event → triggers
-    assert alert is not None
-    assert alert.algorithm == "velocity"
+def test_velocity_under_threshold_no_alert() -> None:
+    algo = VelocityAlgo(max_events=5, window_seconds=60)
+    events = [_make_trade_event() for _ in range(5)]
+    alerts = algo.evaluate_window(
+        events, "t1", datetime.min, datetime.max,
+    )
+    assert alerts == []
 
 
 def test_suspicious_counterparty_triggers_alert() -> None:
@@ -113,6 +134,27 @@ def test_unknown_counterparty_no_alert() -> None:
     assert algo.evaluate(_make_tx_event(counterparty_id="normal_cp")) is None
 
 
+def test_suspicious_counterparty_window_multiple() -> None:
+    algo = SuspiciousCounterpartyAlgo(suspicious_ids={"bad1", "bad2"})
+    events = [
+        _make_tx_event(counterparty_id="bad1"),
+        _make_tx_event(counterparty_id="normal"),
+        _make_tx_event(counterparty_id="bad2"),
+    ]
+    alerts = algo.evaluate_window(
+        events, "t1", datetime.min, datetime.max,
+    )
+    assert len(alerts) == 2
+
+
+def test_evaluate_backwards_compat() -> None:
+    """Single-event evaluate() delegates to evaluate_window()."""
+    algo = LargeNotionalAlgo(threshold_usd=1_000_000)
+    alert = algo.evaluate(_make_trade_event(notional_usd=2_000_000))
+    assert alert is not None
+    assert algo.evaluate(_make_trade_event(notional_usd=100)) is None
+
+
 # ── Module integration tests ──────────────────────────────────────────────────
 
 
@@ -126,14 +168,14 @@ async def test_alert_published_to_kafka() -> None:
 
 
 @pytest.mark.asyncio
-async def test_alert_written_to_db() -> None:
+async def test_algos_publishes_to_kafka_only() -> None:
+    """Alerts are published to Kafka only (alert_manager handles DB persistence)."""
     module, mq, db = await _setup_module()
     event = _make_trade_event(notional_usd=2_000_000)
     await module._evaluate(event)
 
-    alerts = db.fetch_all("SELECT * FROM alerts")
-    assert len(alerts) >= 1
-    assert any(a["algorithm"] == "large_notional" for a in alerts)
+    # Kafka should have the alert
+    assert mq.consume_one(ALERTS) is not None
 
 
 @pytest.mark.asyncio
@@ -142,10 +184,7 @@ async def test_no_alert_for_normal_event() -> None:
     event = _make_trade_event(notional_usd=100)
     await module._evaluate(event)
 
-    # LargeNotionalAlgo and SuspiciousCounterpartyAlgo should not fire
-    # VelocityAlgo: first event in window → under max_events=100
     assert mq.consume_one(ALERTS) is None
-    assert db.fetch_all("SELECT * FROM alerts") == []
 
 
 # ── Per-tenant config tests ──────────────────────────────────────────────────
@@ -162,8 +201,13 @@ async def test_disabled_algo_skipped() -> None:
     event = _make_trade_event(notional_usd=2_000_000)
     await module._evaluate(event)
 
-    # large_notional disabled → no alert from it
-    alerts = db.fetch_all("SELECT * FROM alerts")
+    # Consume all alerts — none should be from large_notional
+    alerts = []
+    while True:
+        a = mq.consume_one(ALERTS)
+        if a is None:
+            break
+        alerts.append(a)
     large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
     assert len(large_notional_alerts) == 0
 
@@ -180,7 +224,12 @@ async def test_custom_threshold_applied() -> None:
     event = _make_trade_event(notional_usd=500_000)
     await module._evaluate(event)
 
-    alerts = db.fetch_all("SELECT * FROM alerts")
+    alerts = []
+    while True:
+        a = mq.consume_one(ALERTS)
+        if a is None:
+            break
+        alerts.append(a)
     large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
     assert len(large_notional_alerts) == 1
 
@@ -189,12 +238,16 @@ async def test_custom_threshold_applied() -> None:
 async def test_unconfigured_tenant_uses_defaults() -> None:
     """Tenants without config use default thresholds (all algos enabled)."""
     module, mq, db = await _setup_module()
-    # No config for tenant — defaults apply
 
     event = _make_trade_event(notional_usd=2_000_000)
     await module._evaluate(event)
 
-    alerts = db.fetch_all("SELECT * FROM alerts")
+    alerts = []
+    while True:
+        a = mq.consume_one(ALERTS)
+        if a is None:
+            break
+        alerts.append(a)
     large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
     assert len(large_notional_alerts) == 1
 
@@ -216,16 +269,15 @@ def test_large_notional_with_custom_threshold() -> None:
 
 
 def test_velocity_with_custom_thresholds() -> None:
-    cache = MemoryCache()
-    algo = VelocityAlgo(cache=cache, max_events=100, window_seconds=60)
-    event = _make_trade_event()
+    algo = VelocityAlgo(max_events=100, window_seconds=60)
+    events = [_make_trade_event() for _ in range(3)]
 
-    # With custom max_events=2, should trigger on 3rd event
-    for _ in range(2):
-        assert algo.evaluate(event, thresholds={"max_events": 2}) is None
-
-    alert = algo.evaluate(event, thresholds={"max_events": 2})
-    assert alert is not None
+    # With custom max_events=2, should trigger on 3 events
+    alerts = algo.evaluate_window(
+        events, "t1", datetime.min, datetime.max,
+        thresholds={"max_events": 2},
+    )
+    assert len(alerts) == 1
 
 
 def test_suspicious_counterparty_with_custom_ids() -> None:

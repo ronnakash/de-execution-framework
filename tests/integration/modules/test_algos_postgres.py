@@ -1,7 +1,8 @@
-"""Integration tests: AlgosModule persists alerts to real Postgres.
+"""Integration tests: AlgosModule publishes alerts to Kafka.
 
-Verifies that the algos module can evaluate events and insert resulting
-alerts into the Postgres alerts table.
+Verifies that the algos module can evaluate events and publish resulting
+alerts to the Kafka alerts topic.  Alert persistence is handled by the
+alert_manager service (not tested here).
 """
 
 from __future__ import annotations
@@ -50,15 +51,14 @@ def _make_enriched_order(
     }
 
 
-async def test_algos_persists_large_notional_alert_to_postgres(alerts_db, redis_cache):
-    """AlgosModule inserts large_notional alert into Postgres alerts table."""
+async def test_algos_publishes_large_notional_alert(redis_cache):
+    """AlgosModule publishes large_notional alert to the alerts Kafka topic."""
     mq = MemoryQueue()
 
     module = AlgosModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
-        db=alerts_db,
         cache=redis_cache,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
@@ -75,14 +75,8 @@ async def test_algos_persists_large_notional_alert_to_postgres(alerts_db, redis_
     assert alert_msg["algorithm"] == "large_notional"
     assert alert_msg["severity"] == "high"
 
-    # Check alert was persisted to Postgres
-    rows = await alerts_db.fetch_all_async("SELECT * FROM alerts")
-    integ_alerts = [r for r in rows if r.get("tenant_id") == "integ-test"]
-    assert len(integ_alerts) >= 1
-    assert integ_alerts[0]["algorithm"] == "large_notional"
 
-
-async def test_algos_no_alert_for_small_trade(alerts_db, redis_cache):
+async def test_algos_no_alert_for_small_trade(redis_cache):
     """AlgosModule does not fire for small trades."""
     mq = MemoryQueue()
 
@@ -90,7 +84,6 @@ async def test_algos_no_alert_for_small_trade(alerts_db, redis_cache):
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
-        db=alerts_db,
         cache=redis_cache,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),

@@ -142,19 +142,27 @@ class MemoryHarness:
         self.cache = MemoryCache()
         self.fs = MemoryFileSystem()
         self.clickhouse_db = MemoryDatabase()
-        self.alerts_db = MemoryDatabase()
         self._currency_db = MemoryDatabase()
 
         self.clickhouse_db.connect()
-        self.alerts_db.connect()
         self._currency_db.connect()
 
         # Pre-seed currency rates in cache
         self.cache.set("currency_rate:EUR_USD", 1.10)
         self.cache.set("currency_rate:GBP_USD", 1.25)
 
+        # Default window config: window_size=0 means immediate per-event
+        # evaluation (LargeNotional, SuspiciousCounterparty).  Scenarios that
+        # need sliding windows (velocity) override this before ingesting.
+        self.cache.set(f"client_config:{self.tenant_id}", {
+            "mode": "realtime",
+            "window_size_minutes": 0,
+            "window_slide_minutes": 0,
+        })
+
         self._algos_config = algos_config or {}
         self._metrics = MemoryMetrics()
+        self._collected_alerts: list[dict] = []
         self.normalizer: NormalizerModule | None = None
         self.persistence: PersistenceModule | None = None
         self.algos: AlgosModule | None = None
@@ -192,7 +200,6 @@ class MemoryHarness:
             config=ModuleConfig(self._algos_config),
             logger=logger,
             mq=self.mq,
-            db=self.alerts_db,
             cache=self.cache,
             lifecycle=LifecycleManager(),
             metrics=self._metrics,
@@ -203,7 +210,6 @@ class MemoryHarness:
             memory_metrics=self._metrics,
             memory_queue=self.mq,
             clickhouse_db=self.clickhouse_db,
-            postgres_db=self.alerts_db,
         )
 
     # ── Pipeline step helpers ────────────────────────────────────────────
@@ -257,6 +263,13 @@ class MemoryHarness:
                     break
                 await self.algos._evaluate(msg)
 
+        # Collect alerts published to the ALERTS Kafka topic
+        while True:
+            alert = self.mq.consume_one(ALERTS)
+            if alert is None:
+                break
+            self._collected_alerts.append(alert)
+
     # ── Harness interface ────────────────────────────────────────────────
 
     async def ingest(
@@ -304,9 +317,7 @@ class MemoryHarness:
         # Drive pipeline first to make sure algos have processed everything
         self._drain_normalizer()
         await self._drain_all_algos_topics()
-        return self._filter_by_tenant(
-            self.alerts_db.fetch_all("SELECT * FROM alerts")
-        )
+        return self._filter_by_tenant(self._collected_alerts)
 
     async def wait_for_alert(
         self, predicate: Callable[[dict], bool], timeout: float = 30.0
@@ -314,22 +325,18 @@ class MemoryHarness:
         # Drive normalizer → algos
         self._drain_normalizer()
         await self._drain_all_algos_topics()
-        return self._filter_by_tenant(
-            self.alerts_db.fetch_all("SELECT * FROM alerts")
-        )
+        return self._filter_by_tenant(self._collected_alerts)
 
     async def query_api(
         self, endpoint: str, params: dict[str, str]
     ) -> tuple[int, Any]:
         db_factory = DatabaseFactory({})
         db_factory.register_instance("events", self.clickhouse_db)
-        db_factory.register_instance("alerts", self.alerts_db)
         from de_platform.services.secrets.env_secrets import EnvSecrets
 
         api = DataApiModule(
             config=ModuleConfig({}),
             logger=LoggerFactory(default_impl="memory"),
-            mq=self.mq,
             db_factory=db_factory,
             lifecycle=LifecycleManager(),
             metrics=NoopMetrics(),
@@ -431,7 +438,7 @@ def _wait_for_http_sync(url: str, timeout: float = 45.0) -> None:
 
 
 class SharedPipeline:
-    """Session-scoped pipeline that starts 8 module subprocesses once.
+    """Session-scoped pipeline that starts 9 module subprocesses once.
 
     Uses a file lock so only ONE xdist worker starts the pipeline;
     other workers connect to the same subprocesses.  The last worker
@@ -456,6 +463,7 @@ class SharedPipeline:
         self.api_port: int = 0
         self.config_port: int = 0
         self.auth_port: int = 0
+        self.alert_manager_port: int = 0
         self._health_ports: dict[str, int] = {}
         self._clickhouse_db: Any = None
         self._kafka_producer: Any = None
@@ -473,6 +481,7 @@ class SharedPipeline:
                     self.api_port = info["api_port"]
                     self.config_port = info.get("config_port", 0)
                     self.auth_port = info.get("auth_port", 0)
+                    self.alert_manager_port = info.get("alert_manager_port", 0)
                     self._health_ports = info.get("health_ports", {})
                 else:
                     self._start_subprocesses()
@@ -481,6 +490,7 @@ class SharedPipeline:
                         "api_port": self.api_port,
                         "config_port": self.config_port,
                         "auth_port": self.auth_port,
+                        "alert_manager_port": self.alert_manager_port,
                         "health_ports": self._health_ports,
                         "pids": {n: p.pid for n, p in self._procs.items()},
                     }))
@@ -516,6 +526,7 @@ class SharedPipeline:
 
     def _start_subprocesses(self) -> None:
         from de_platform.pipeline.topics import (
+            ALERTS,
             DUPLICATES,
             EXECUTIONS_PERSISTENCE,
             NORMALIZATION_ERRORS,
@@ -532,6 +543,7 @@ class SharedPipeline:
         self.api_port = _free_port()
         self.config_port = _free_port()
         self.auth_port = _free_port()
+        self.alert_manager_port = _free_port()
 
         # Per-module Kafka topic subscriptions: pre-subscribe all topics at
         # connect time to avoid incremental rebalance storms.
@@ -543,6 +555,7 @@ class SharedPipeline:
                 TRANSACTIONS_PERSISTENCE, DUPLICATES, NORMALIZATION_ERRORS,
             ]),
             "algos": f"{TRADES_ALGOS},{TRANSACTIONS_ALGOS}",
+            "alert_manager": ALERTS,
         }
 
         _jwt_secret = "e2e-test-jwt-secret-at-least-32-bytes-long"
@@ -553,10 +566,12 @@ class SharedPipeline:
             ("normalizer", ["--db", "warehouse=postgres", "--cache", "redis", "--mq", "kafka"], []),
             ("persistence", ["--db", "clickhouse=clickhouse", "--fs", "minio", "--mq", "kafka"],
              ["--flush-threshold", "1", "--flush-interval", "0"]),
-            ("algos", ["--db", "alerts=postgres", "--cache", "redis", "--mq", "kafka"],
+            ("algos", ["--cache", "redis", "--mq", "kafka"],
              ["--suspicious-counterparty-ids", "bad-cp-1"]),
-            ("data_api", ["--db", "events=clickhouse", "--db", "alerts=postgres", "--mq", "kafka"],
+            ("data_api", ["--db", "events=clickhouse"],
              ["--port", str(self.api_port)]),
+            ("alert_manager", ["--db", "alerts=postgres", "--mq", "kafka"],
+             ["--port", str(self.alert_manager_port)]),
             ("client_config", ["--db", "client_config=postgres", "--cache", "redis"],
              ["--port", str(self.config_port)]),
             ("auth", ["--db", "auth=postgres"],

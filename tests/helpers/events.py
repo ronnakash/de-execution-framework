@@ -28,12 +28,13 @@ def make_order(
     quantity: float = 100.0,
     price: float = 200.0,
     currency: str = "USD",
+    transact_time: str = "2026-01-15T10:00:00+00:00",
 ) -> dict[str, Any]:
     return {
         "id": id_ or f"o-{uuid.uuid4().hex[:8]}",
         "tenant_id": tenant_id,
         "status": "new",
-        "transact_time": "2026-01-15T10:00:00+00:00",
+        "transact_time": transact_time,
         "symbol": "AAPL",
         "side": "buy",
         "quantity": quantity,

@@ -176,6 +176,7 @@ def _run_schema_init(request: Any) -> None:
     MigrationRunner(pg_db, db_name="alerts").up()
     MigrationRunner(pg_db, db_name="client_config").up()
     MigrationRunner(pg_db, db_name="auth").up()
+    MigrationRunner(pg_db, db_name="alert_manager").up()
     asyncio.get_event_loop().run_until_complete(pg_db.disconnect_async())
 
     # ClickHouse: execute init SQL

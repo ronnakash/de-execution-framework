@@ -1,15 +1,16 @@
 """Fraud Detection Algos Service.
 
 Reads enriched events from algos topics, runs pluggable fraud detection
-algorithms, publishes Alert dicts to the alerts Kafka topic, and persists them
-to the alerts PostgreSQL table.
+algorithms via the SlidingWindowEngine, and publishes Alert dicts to the
+alerts Kafka topic.  The alert_manager service handles persistence and
+case aggregation.
 
 Topics consumed:
     trades_algos       — enriched orders and executions
     transactions_algos — enriched transactions
 
 Topics produced:
-    alerts             — Alert dicts for the Data API
+    alerts             — Alert dicts for the Alert Manager
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from de_platform.pipeline.algorithms import (
     VelocityAlgo,
 )
 from de_platform.pipeline.topics import ALERTS, TRADES_ALGOS, TRANSACTIONS_ALGOS
+from de_platform.pipeline.window_engine import SlidingWindowEngine, WindowConfig
 from de_platform.services.cache.interface import CacheInterface
-from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
@@ -43,7 +44,6 @@ class AlgosModule(Module):
         config: ModuleConfig,
         logger: LoggerFactory,
         mq: MessageQueueInterface,
-        db: DatabaseInterface,
         cache: CacheInterface,
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
@@ -51,7 +51,6 @@ class AlgosModule(Module):
         self.config = config
         self.logger = logger
         self.mq = mq
-        self.db = db
         self.cache = cache
         self.lifecycle = lifecycle
         self.metrics = metrics
@@ -59,14 +58,13 @@ class AlgosModule(Module):
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
-        await self.db.connect_async()
         suspicious_ids_str: str = self.config.get("suspicious-counterparty-ids", "")
         suspicious_ids: set[str] = (
             {x.strip() for x in suspicious_ids_str.split(",") if x.strip()}
         )
         self.algorithms = [
             LargeNotionalAlgo(threshold_usd=1_000_000),
-            VelocityAlgo(cache=self.cache),
+            VelocityAlgo(),
             SuspiciousCounterpartyAlgo(suspicious_ids=suspicious_ids),
         ]
 
@@ -75,11 +73,32 @@ class AlgosModule(Module):
         self.config_cache = ClientConfigCache(self.cache)
         self.config_cache.start()
         self.lifecycle.on_shutdown(lambda: self.config_cache.stop())
-        self.lifecycle.on_shutdown(self.db.disconnect_async)
+
+        self.engine = SlidingWindowEngine(
+            algorithms=self.algorithms,
+            get_window_config=self._get_window_config,
+            get_algo_config=self._get_algo_config,
+        )
+
         self.log.info(
             "Algos initialized",
             algorithms=[a.name() for a in self.algorithms],
         )
+
+    def _get_window_config(self, tenant_id: str) -> WindowConfig:
+        config = self.config_cache._get_client(tenant_id)
+        if config:
+            return WindowConfig(
+                window_size_minutes=config.get("window_size_minutes", 0),
+                window_slide_minutes=config.get("window_slide_minutes", 0),
+            )
+        # Default: immediate evaluation (window_size=0)
+        return WindowConfig(window_size_minutes=0, window_slide_minutes=0)
+
+    def _get_algo_config(self, tenant_id: str, algo_name: str) -> tuple[bool, dict]:
+        enabled = self.config_cache.is_algo_enabled(tenant_id, algo_name)
+        thresholds = self.config_cache.get_algo_thresholds(tenant_id, algo_name)
+        return enabled, thresholds
 
     async def execute(self) -> int:
         self.log.info("Algos running", module="algos")
@@ -105,33 +124,24 @@ class AlgosModule(Module):
             event_id=event_id,
             event_type=event_type,
         )
-        for algo in self.algorithms:
-            if not self.config_cache.is_algo_enabled(tenant_id, algo.name()):
-                continue
-            thresholds = self.config_cache.get_algo_thresholds(tenant_id, algo.name())
-            alert = algo.evaluate(event, thresholds=thresholds or None)
-            if alert:
-                alert_dict = alert.to_dict()
-                msg_key = f"{tenant_id}:{event_id}" if tenant_id else None
-                self.mq.publish(ALERTS, alert_dict, key=msg_key)
-                # Postgres TIMESTAMP needs datetime, not ISO string
-                db_row = dict(alert_dict)
-                if isinstance(db_row.get("created_at"), str):
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(db_row["created_at"])
-                    db_row["created_at"] = dt.replace(tzinfo=None)
-                await self.db.insert_one_async("alerts", db_row)
-                self.metrics.counter("alerts_generated_total", tags={
-                    "algorithm": algo.name(), "severity": alert.severity, "tenant_id": tenant_id,
-                })
-                self.log.info(
-                    "Alert generated",
-                    algorithm=algo.name(),
-                    tenant_id=tenant_id,
-                    event_id=event_id,
-                    event_type=event_type,
-                    severity=alert.severity,
-                )
+
+        alerts = self.engine.ingest(event)
+
+        for alert in alerts:
+            alert_dict = alert.to_dict()
+            msg_key = f"{tenant_id}:{event_id}" if tenant_id else None
+            self.mq.publish(ALERTS, alert_dict, key=msg_key)
+            self.metrics.counter("alerts_generated_total", tags={
+                "algorithm": alert.algorithm, "severity": alert.severity, "tenant_id": tenant_id,
+            })
+            self.log.info(
+                "Alert published",
+                algorithm=alert.algorithm,
+                tenant_id=tenant_id,
+                event_id=event_id,
+                event_type=event_type,
+                severity=alert.severity,
+            )
 
 
 module_class = AlgosModule

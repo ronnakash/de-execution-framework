@@ -117,11 +117,9 @@ async def test_pipeline_end_to_end() -> None:
     # Separate "databases" for different roles (mirrors production topology)
     currency_db = MemoryDatabase()   # PostgreSQL currency instance
     clickhouse_db = MemoryDatabase() # ClickHouse event storage
-    alerts_db = MemoryDatabase()     # PostgreSQL alerts instance
 
     currency_db.connect()
     clickhouse_db.connect()
-    alerts_db.connect()
 
     # ── Step 2: Load currency rates ───────────────────────────────────────
     currency_db.bulk_insert("currency_rates", [
@@ -228,7 +226,6 @@ async def test_pipeline_end_to_end() -> None:
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
         mq=mq,
-        db=alerts_db,
         cache=cache,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
@@ -248,16 +245,12 @@ async def test_pipeline_end_to_end() -> None:
     }
     await algos._evaluate(big_trade)
 
-    # ── Step 9: Verify alert ──────────────────────────────────────────────
+    # ── Step 9: Verify alert published to Kafka ───────────────────────────
     alert_msg = mq.consume_one(ALERTS)
     assert alert_msg is not None, "No alert published to ALERTS topic"
     assert alert_msg["algorithm"] == "large_notional"
     assert alert_msg["tenant_id"] == "acme"
     assert alert_msg["severity"] == "high"
-
-    alert_rows = alerts_db.fetch_all("SELECT * FROM alerts")
-    assert len(alert_rows) >= 1
-    assert any(r["algorithm"] == "large_notional" for r in alert_rows)
 
 
 @pytest.mark.asyncio
@@ -360,13 +353,12 @@ async def test_persistence_shutdown_flushes_all_buffers() -> None:
 async def test_algos_no_alert_for_small_trade() -> None:
     """Events well below the $1 M threshold must not generate alerts."""
     mq = MemoryQueue()
-    db = MemoryDatabase()
     cache = MemoryCache()
 
     algos = AlgosModule(
         config=ModuleConfig({}),
         logger=LoggerFactory(default_impl="memory"),
-        mq=mq, db=db, cache=cache,
+        mq=mq, cache=cache,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
     )
@@ -380,4 +372,3 @@ async def test_algos_no_alert_for_small_trade() -> None:
     await algos._evaluate(small_trade)
 
     assert mq.consume_one(ALERTS) is None
-    assert db.fetch_all("SELECT * FROM alerts") == []

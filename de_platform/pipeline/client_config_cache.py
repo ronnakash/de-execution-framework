@@ -61,6 +61,26 @@ class ClientConfigCache:
         config = self._get_algo_config(tenant_id, algorithm)
         return config.get("thresholds", {}) if config else {}
 
+    def get_window_config(self, tenant_id: str) -> dict:
+        """Return window configuration for *tenant_id*.
+
+        Returns a dict with ``window_size_minutes``, ``window_slide_minutes``,
+        and ``case_aggregation_minutes``.  Falls back to reasonable defaults
+        when no tenant config exists.
+        """
+        config = self._get_client(tenant_id)
+        if config:
+            return {
+                "window_size_minutes": config.get("window_size_minutes", 0),
+                "window_slide_minutes": config.get("window_slide_minutes", 0),
+                "case_aggregation_minutes": config.get("case_aggregation_minutes", 60),
+            }
+        return {
+            "window_size_minutes": 0,
+            "window_slide_minutes": 0,
+            "case_aggregation_minutes": 60,
+        }
+
     # ── Internal helpers ──────────────────────────────────────────────────
 
     def _get_client(self, tenant_id: str) -> dict | None:

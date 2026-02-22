@@ -1,0 +1,16 @@
+{
+  "name": "alert_manager",
+  "display_name": "Alert Management Service",
+  "description": "Consumes alerts from Kafka, deduplicates, persists to Postgres, aggregates into cases, and serves REST API for alerts and cases",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "port",
+      "description": "HTTP port for the REST API",
+      "required": false,
+      "type": "integer",
+      "default": "8007"
+    }
+  ]
+}

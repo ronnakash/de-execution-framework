@@ -1,0 +1,34 @@
+{
+  "name": "batch_algos",
+  "display_name": "Batch Fraud Algos",
+  "description": "Run fraud detection algorithms on historical ClickHouse data using sliding windows",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "tenant-id",
+      "description": "Tenant to process",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "start-date",
+      "description": "Start date (YYYY-MM-DD)",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "end-date",
+      "description": "End date (YYYY-MM-DD)",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "suspicious-counterparty-ids",
+      "description": "Comma-separated suspicious counterparty IDs to flag",
+      "required": false,
+      "type": "string",
+      "default": ""
+    }
+  ]
+}

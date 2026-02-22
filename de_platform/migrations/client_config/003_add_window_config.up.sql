@@ -1,0 +1,4 @@
+ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS window_size_minutes    INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS window_slide_minutes   INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS case_aggregation_minutes INTEGER NOT NULL DEFAULT 60;

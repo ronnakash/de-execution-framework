@@ -189,6 +189,9 @@ class ClientConfigModule(Module):
             "display_name": display_name,
             "mode": body.get("mode", "batch"),
             "algo_run_hour": body.get("algo_run_hour"),
+            "window_size_minutes": body.get("window_size_minutes", 0),
+            "window_slide_minutes": body.get("window_slide_minutes", 0),
+            "case_aggregation_minutes": body.get("case_aggregation_minutes", 60),
         }
         await self.db.insert_one_async("clients", row)
         self._sync_client_to_cache(row)
@@ -221,6 +224,12 @@ class ClientConfigModule(Module):
             existing["mode"] = body["mode"]
         if "algo_run_hour" in body:
             existing["algo_run_hour"] = body["algo_run_hour"]
+        if "window_size_minutes" in body:
+            existing["window_size_minutes"] = body["window_size_minutes"]
+        if "window_slide_minutes" in body:
+            existing["window_slide_minutes"] = body["window_slide_minutes"]
+        if "case_aggregation_minutes" in body:
+            existing["case_aggregation_minutes"] = body["case_aggregation_minutes"]
 
         # MemoryDatabase doesn't support UPDATE, so delete + re-insert
         await self.db.execute_async(
@@ -358,6 +367,9 @@ class ClientConfigModule(Module):
             "mode": row.get("mode", "batch"),
             "algo_run_hour": row.get("algo_run_hour"),
             "display_name": row.get("display_name", ""),
+            "window_size_minutes": row.get("window_size_minutes", 0),
+            "window_slide_minutes": row.get("window_slide_minutes", 0),
+            "case_aggregation_minutes": row.get("case_aggregation_minutes", 60),
         })
         self.cache.publish_channel(CHANNEL, tenant_id)
 

@@ -208,16 +208,43 @@ async def scenario_large_notional(harness: PipelineHarness) -> None:
 
 
 async def scenario_velocity(harness: PipelineHarness) -> None:
-    """VelocityAlgo: fires when a tenant submits more than 100 events in the window."""
+    """VelocityAlgo: fires when a tenant submits more than 100 events in the window.
+
+    We send 151 events at 2s intervals (span = 300s = 5 min exactly).  The
+    engine evaluates when span >= window_size (300s).  The window [t0, t0+5m)
+    contains events 0-149 (150 events) — event 150 at t=300s is excluded by
+    the strict upper bound.  150 > 100 triggers the velocity alert.
+
+    The harness default is window_size=0 (per-event evaluation).  This scenario
+    overrides the tenant's window config to enable sliding-window mode.
+    """
     tenant_id = harness.tenant_id
-    orders = [make_order(tenant_id=tenant_id) for _ in range(101)]
+
+    # Enable 5-min sliding window for this tenant (default is 0 = per-event)
+    if hasattr(harness, "cache"):
+        harness.cache.set(f"client_config:{tenant_id}", {
+            "mode": "realtime",
+            "window_size_minutes": 5,
+            "window_slide_minutes": 1,
+        })
+
+    from datetime import datetime, timedelta
+
+    base = datetime.fromisoformat("2026-01-15T10:00:00+00:00")
+    orders = [
+        make_order(
+            tenant_id=tenant_id,
+            transact_time=(base + timedelta(seconds=i * 2)).isoformat(),
+        )
+        for i in range(151)
+    ]
     await harness.ingest("rest", "order", orders)
 
     alerts = await harness.wait_for_alert(
         lambda r: r.get("algorithm") == "velocity"
     )
     velocity = [a for a in alerts if a.get("algorithm") == "velocity"]
-    assert velocity, "VelocityAlgo should fire after 101 events"
+    assert velocity, "VelocityAlgo should fire after 151 events"
 
 
 async def scenario_suspicious_counterparty(harness: PipelineHarness) -> None:
