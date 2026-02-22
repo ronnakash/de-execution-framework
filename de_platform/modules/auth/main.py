@@ -346,11 +346,13 @@ class AuthModule(Module):
 
     async def _create_refresh_token(self, user_id: str) -> str:
         token_id = uuid.uuid4().hex
-        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=self.refresh_token_ttl)
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            seconds=self.refresh_token_ttl,
+        )
         await self.db.insert_one_async("refresh_tokens", {
             "token_id": token_id,
             "user_id": user_id,
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_at,
         })
         return token_id
 

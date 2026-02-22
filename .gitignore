@@ -41,6 +41,10 @@ data_platform_phase2_spec.md
 .envfiles/
 !.envfiles/devcontainer.env
 
+# Dev server
+.dev-pids
+.dev-logs/
+
 # Test reports
 reports/
 

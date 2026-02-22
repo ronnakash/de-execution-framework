@@ -1,6 +1,6 @@
-.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui infra-up infra-down setup setup-full
+.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-stop infra-up infra-down setup setup-full
 
-PYTHON ?= python3
+PYTHON ?= .venv/bin/python
 PYTEST = $(PYTHON) -m pytest
 
 test:
@@ -50,6 +50,18 @@ build-ui:
 
 dev-ui:
 	cd ui && npm run dev
+
+dev:
+	./scripts/dev.sh
+
+dev-stop:
+	@if [ -f .dev-pids ]; then \
+		while IFS= read -r pid; do kill "$$pid" 2>/dev/null || true; done < .dev-pids; \
+		rm -f .dev-pids; \
+		echo "Services stopped."; \
+	else \
+		echo "No .dev-pids file found."; \
+	fi
 
 setup:
 	python3.12 -m venv .venv

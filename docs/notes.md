@@ -6,3 +6,7 @@
 6. we need to improve the way data audit works. we need to collect incoming messages per way to send data.
 7. we need to improve the tests report to have the ability to click on a single test and see all of the important thing about it. We should have some form of dedicated logger that shows the important things about the test and the results in each step and also have a general explanation of each step
 8. we need to be able to up all of the system in individual docker containers. Let's think about how to do that. I think the main idea should be to build one docker image of the whole project and invoke a single service at a time with the command line args. We need a dedicated separate design for it
+9. ui tables should support sorting and pagination (of course that would require backend work to support). I think we should move away from HTTP GET for these endpoints and have some framework to use POST requests and have shared logic to get json request bodies and turn them into query filters and support pagination and sorting
+10. data audit data is a mess, debug
+11. when searhing events in the UI for all client as admin user it shows nothing, and when doing so with a specific tenant filtered I now see their data
+12. i dont see any alerts or cases

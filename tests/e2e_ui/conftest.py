@@ -2,7 +2,7 @@
 
 Requires:
 - ``make infra-up`` (docker-compose services)
-- ``make build-ui`` (React build → static files)
+- ``make build-ui`` (React build -> static files)
 - SharedPipeline running (started automatically via session fixture)
 
 Usage::
@@ -16,8 +16,13 @@ from __future__ import annotations
 
 import pytest
 
-# Re-use infrastructure fixtures (infra, _init_schemas, shared_pipeline)
-pytest_plugins = ["tests.e2e.conftest"]
+# Re-use infrastructure fixtures from E2E tests by direct import.
+# pytest discovers fixtures that are in scope in conftest.py modules.
+from tests.e2e.conftest import (  # noqa: F401
+    _init_schemas,
+    infra,
+    shared_pipeline,
+)
 
 
 @pytest.fixture(scope="session")

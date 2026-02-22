@@ -8,6 +8,7 @@ docker-compose services to be running (``make infra-up``).
 from tests.e2e.conftest import (  # noqa: F401
     _init_schemas,
     alerts_db,
+    auth_db,
     clickhouse_db,
     infra,
     kafka_mq,

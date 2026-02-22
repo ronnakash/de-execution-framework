@@ -237,7 +237,7 @@ class DataAuditModule(Module):
             else:
                 await self.db.insert_one_async("daily_audit", {
                     "tenant_id": tenant_id,
-                    "date": date_str,
+                    "date": date.fromisoformat(date_str),
                     "event_type": event_type,
                     _RECEIVED: counts[_RECEIVED],
                     _PROCESSED: counts[_PROCESSED],

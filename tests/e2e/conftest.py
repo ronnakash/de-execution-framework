@@ -387,6 +387,17 @@ async def alerts_db(secrets):
 
 
 @pytest.fixture
+async def auth_db(secrets):
+    """Connected PostgresDatabase for auth (users, refresh_tokens)."""
+    from de_platform.services.database.postgres_database import PostgresDatabase
+
+    db = PostgresDatabase(secrets=secrets, prefix="DB_AUTH")
+    await db.connect_async()
+    yield db
+    await db.disconnect_async()
+
+
+@pytest.fixture
 def clickhouse_db(secrets):
     """Connected ClickHouseDatabase."""
     from de_platform.services.database.clickhouse_database import ClickHouseDatabase
