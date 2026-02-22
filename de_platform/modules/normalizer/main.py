@@ -78,6 +78,12 @@ class NormalizerModule(Module):
         await self.db.connect_async()
         self.deduplicator = EventDeduplicator(self.cache)
         self.currency_converter = CurrencyConverter(self.db, self.cache)
+
+        from de_platform.pipeline.client_config_cache import ClientConfigCache
+
+        self.config_cache = ClientConfigCache(self.cache)
+        self.config_cache.start()
+        self.lifecycle.on_shutdown(lambda: self.config_cache.stop())
         self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info("Normalizer initialized", module="normalizer")
 
@@ -148,19 +154,23 @@ class NormalizerModule(Module):
             return
 
         normalized_at = now_iso()
+        is_realtime = self.config_cache.get_client_mode(tenant_id) == "realtime"
+
         if category == "trade":
             enriched = enrich_trade_event(msg, self.currency_converter, normalized_at)
             persistence_topic = _PERSISTENCE_TOPIC.get(event_type, ORDERS_PERSISTENCE)
             self.mq.publish(persistence_topic, enriched, key=msg_key)
-            self.mq.publish(TRADES_ALGOS, enriched, key=msg_key)
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": persistence_topic})
-            self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRADES_ALGOS})
+            if is_realtime:
+                self.mq.publish(TRADES_ALGOS, enriched, key=msg_key)
+                self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRADES_ALGOS})
         else:
             enriched = enrich_transaction_event(msg, self.currency_converter, normalized_at)
             self.mq.publish(TRANSACTIONS_PERSISTENCE, enriched, key=msg_key)
-            self.mq.publish(TRANSACTIONS_ALGOS, enriched, key=msg_key)
             self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRANSACTIONS_PERSISTENCE})
-            self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRANSACTIONS_ALGOS})
+            if is_realtime:
+                self.mq.publish(TRANSACTIONS_ALGOS, enriched, key=msg_key)
+                self.metrics.counter("kafka_messages_published_total", tags={"service": "normalizer", "topic": TRANSACTIONS_ALGOS})
 
         self.metrics.counter("events_processed_total", tags={**tags, "status": "ok"})
         self.log.info(

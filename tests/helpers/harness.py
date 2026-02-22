@@ -428,7 +428,7 @@ def _wait_for_http_sync(url: str, timeout: float = 45.0) -> None:
 
 
 class SharedPipeline:
-    """Session-scoped pipeline that starts 6 module subprocesses once.
+    """Session-scoped pipeline that starts 7 module subprocesses once.
 
     Uses a file lock so only ONE xdist worker starts the pipeline;
     other workers connect to the same subprocesses.  The last worker
@@ -451,6 +451,7 @@ class SharedPipeline:
 
         self.rest_port: int = 0
         self.api_port: int = 0
+        self.config_port: int = 0
         self._health_ports: dict[str, int] = {}
         self._clickhouse_db: Any = None
         self._kafka_producer: Any = None
@@ -466,12 +467,14 @@ class SharedPipeline:
                     info = _json.loads(self._info_file.read_text())
                     self.rest_port = info["rest_port"]
                     self.api_port = info["api_port"]
+                    self.config_port = info.get("config_port", 0)
                     self._health_ports = info.get("health_ports", {})
                 else:
                     self._start_subprocesses()
                     self._info_file.write_text(_json.dumps({
                         "rest_port": self.rest_port,
                         "api_port": self.api_port,
+                        "config_port": self.config_port,
                         "health_ports": self._health_ports,
                         "pids": {n: p.pid for n, p in self._procs.items()},
                     }))
@@ -521,6 +524,7 @@ class SharedPipeline:
         infra = self._infra
         self.rest_port = _free_port()
         self.api_port = _free_port()
+        self.config_port = _free_port()
 
         # Per-module Kafka topic subscriptions: pre-subscribe all topics at
         # connect time to avoid incremental rebalance storms.
@@ -544,6 +548,8 @@ class SharedPipeline:
              ["--suspicious-counterparty-ids", "bad-cp-1"]),
             ("data_api", ["--db", "events=clickhouse", "--db", "alerts=postgres", "--mq", "kafka"],
              ["--port", str(self.api_port)]),
+            ("client_config", ["--db", "client_config=postgres", "--cache", "redis"],
+             ["--port", str(self.config_port)]),
         ]
 
         for module_name, db_flags, extra_flags in module_specs:

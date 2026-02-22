@@ -146,3 +146,95 @@ async def test_no_alert_for_normal_event() -> None:
     # VelocityAlgo: first event in window → under max_events=100
     assert mq.consume_one(ALERTS) is None
     assert db.fetch_all("SELECT * FROM alerts") == []
+
+
+# ── Per-tenant config tests ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_disabled_algo_skipped() -> None:
+    """When large_notional is disabled for a tenant, no alert is generated."""
+    module, mq, db = await _setup_module()
+    module.config_cache._cache.set("algo_config:t1:large_notional", {
+        "enabled": False, "thresholds": {},
+    })
+
+    event = _make_trade_event(notional_usd=2_000_000)
+    await module._evaluate(event)
+
+    # large_notional disabled → no alert from it
+    alerts = db.fetch_all("SELECT * FROM alerts")
+    large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
+    assert len(large_notional_alerts) == 0
+
+
+@pytest.mark.asyncio
+async def test_custom_threshold_applied() -> None:
+    """Custom threshold_usd for a tenant lowers the alert trigger level."""
+    module, mq, db = await _setup_module()
+    module.config_cache._cache.set("algo_config:t1:large_notional", {
+        "enabled": True, "thresholds": {"threshold_usd": 100_000},
+    })
+
+    # 500K exceeds the custom 100K threshold but not the default 1M
+    event = _make_trade_event(notional_usd=500_000)
+    await module._evaluate(event)
+
+    alerts = db.fetch_all("SELECT * FROM alerts")
+    large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
+    assert len(large_notional_alerts) == 1
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_tenant_uses_defaults() -> None:
+    """Tenants without config use default thresholds (all algos enabled)."""
+    module, mq, db = await _setup_module()
+    # No config for tenant — defaults apply
+
+    event = _make_trade_event(notional_usd=2_000_000)
+    await module._evaluate(event)
+
+    alerts = db.fetch_all("SELECT * FROM alerts")
+    large_notional_alerts = [a for a in alerts if a.get("algorithm") == "large_notional"]
+    assert len(large_notional_alerts) == 1
+
+
+# ── Algorithm with custom thresholds ─────────────────────────────────────────
+
+
+def test_large_notional_with_custom_threshold() -> None:
+    algo = LargeNotionalAlgo(threshold_usd=1_000_000)
+    event = _make_trade_event(notional_usd=500_000)
+
+    # Default threshold: no alert
+    assert algo.evaluate(event) is None
+
+    # Custom threshold: alert
+    alert = algo.evaluate(event, thresholds={"threshold_usd": 100_000})
+    assert alert is not None
+    assert alert.details["threshold_usd"] == 100_000
+
+
+def test_velocity_with_custom_thresholds() -> None:
+    cache = MemoryCache()
+    algo = VelocityAlgo(cache=cache, max_events=100, window_seconds=60)
+    event = _make_trade_event()
+
+    # With custom max_events=2, should trigger on 3rd event
+    for _ in range(2):
+        assert algo.evaluate(event, thresholds={"max_events": 2}) is None
+
+    alert = algo.evaluate(event, thresholds={"max_events": 2})
+    assert alert is not None
+
+
+def test_suspicious_counterparty_with_custom_ids() -> None:
+    algo = SuspiciousCounterpartyAlgo(suspicious_ids={"bad_actor"})
+    event = _make_tx_event(counterparty_id="custom_bad")
+
+    # Default IDs: no alert
+    assert algo.evaluate(event) is None
+
+    # Custom IDs: alert
+    alert = algo.evaluate(event, thresholds={"suspicious_ids": ["custom_bad"]})
+    assert alert is not None

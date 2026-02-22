@@ -56,8 +56,14 @@ class FraudAlgorithm(ABC):
         ...
 
     @abstractmethod
-    def evaluate(self, event: dict[str, Any]) -> Alert | None:
-        """Return an Alert if fraud is detected, None otherwise."""
+    def evaluate(
+        self, event: dict[str, Any], thresholds: dict[str, Any] | None = None,
+    ) -> Alert | None:
+        """Return an Alert if fraud is detected, None otherwise.
+
+        If *thresholds* is provided, values override the algo's constructor
+        defaults for this evaluation only.
+        """
         ...
 
 
@@ -70,10 +76,13 @@ class LargeNotionalAlgo(FraudAlgorithm):
     def name(self) -> str:
         return "large_notional"
 
-    def evaluate(self, event: dict[str, Any]) -> Alert | None:
+    def evaluate(
+        self, event: dict[str, Any], thresholds: dict[str, Any] | None = None,
+    ) -> Alert | None:
+        threshold_usd = (thresholds or {}).get("threshold_usd", self.threshold_usd)
         notional_usd = event.get("notional_usd") or event.get("amount_usd", 0)
         try:
-            if float(notional_usd) > self.threshold_usd:
+            if float(notional_usd) > threshold_usd:
                 return Alert(
                     alert_id=uuid.uuid4().hex,
                     tenant_id=event.get("tenant_id", ""),
@@ -83,11 +92,11 @@ class LargeNotionalAlgo(FraudAlgorithm):
                     algorithm=self.name(),
                     severity="high",
                     description=(
-                        f"Notional exceeds ${self.threshold_usd:,.0f} USD threshold"
+                        f"Notional exceeds ${threshold_usd:,.0f} USD threshold"
                     ),
                     details={
                         "notional_usd": float(notional_usd),
-                        "threshold_usd": self.threshold_usd,
+                        "threshold_usd": threshold_usd,
                     },
                     created_at=_now_iso(),
                 )
@@ -112,16 +121,21 @@ class VelocityAlgo(FraudAlgorithm):
     def name(self) -> str:
         return "velocity"
 
-    def evaluate(self, event: dict[str, Any]) -> Alert | None:
+    def evaluate(
+        self, event: dict[str, Any], thresholds: dict[str, Any] | None = None,
+    ) -> Alert | None:
+        max_events = (thresholds or {}).get("max_events", self.max_events)
+        window_seconds = (thresholds or {}).get("window_seconds", self.window_seconds)
+
         tenant_id = event.get("tenant_id", "")
-        bucket = int(time.time() / self.window_seconds)
+        bucket = int(time.time() / window_seconds)
         cache_key = f"velocity:{tenant_id}:{bucket}"
 
         current: int = self.cache.get(cache_key) or 0
         current += 1
-        self.cache.set(cache_key, current, ttl=self.window_seconds * 2)
+        self.cache.set(cache_key, current, ttl=window_seconds * 2)
 
-        if current > self.max_events:
+        if current > max_events:
             return Alert(
                 alert_id=uuid.uuid4().hex,
                 tenant_id=tenant_id,
@@ -131,12 +145,12 @@ class VelocityAlgo(FraudAlgorithm):
                 algorithm=self.name(),
                 severity="medium",
                 description=(
-                    f"Tenant {tenant_id!r} exceeded {self.max_events} events"
-                    f" in {self.window_seconds}s window"
+                    f"Tenant {tenant_id!r} exceeded {max_events} events"
+                    f" in {window_seconds}s window"
                 ),
                 details={
                     "event_count": current,
-                    "window_seconds": self.window_seconds,
+                    "window_seconds": window_seconds,
                 },
                 created_at=_now_iso(),
             )
@@ -152,9 +166,14 @@ class SuspiciousCounterpartyAlgo(FraudAlgorithm):
     def name(self) -> str:
         return "suspicious_counterparty"
 
-    def evaluate(self, event: dict[str, Any]) -> Alert | None:
+    def evaluate(
+        self, event: dict[str, Any], thresholds: dict[str, Any] | None = None,
+    ) -> Alert | None:
+        suspicious_ids = self.suspicious_ids
+        if thresholds and "suspicious_ids" in thresholds:
+            suspicious_ids = set(thresholds["suspicious_ids"])
         counterparty_id = event.get("counterparty_id", "")
-        if counterparty_id in self.suspicious_ids:
+        if counterparty_id in suspicious_ids:
             return Alert(
                 alert_id=uuid.uuid4().hex,
                 tenant_id=event.get("tenant_id", ""),

@@ -69,6 +69,12 @@ class AlgosModule(Module):
             VelocityAlgo(cache=self.cache),
             SuspiciousCounterpartyAlgo(suspicious_ids=suspicious_ids),
         ]
+
+        from de_platform.pipeline.client_config_cache import ClientConfigCache
+
+        self.config_cache = ClientConfigCache(self.cache)
+        self.config_cache.start()
+        self.lifecycle.on_shutdown(lambda: self.config_cache.stop())
         self.lifecycle.on_shutdown(self.db.disconnect_async)
         self.log.info(
             "Algos initialized",
@@ -100,7 +106,10 @@ class AlgosModule(Module):
             event_type=event_type,
         )
         for algo in self.algorithms:
-            alert = algo.evaluate(event)
+            if not self.config_cache.is_algo_enabled(tenant_id, algo.name()):
+                continue
+            thresholds = self.config_cache.get_algo_thresholds(tenant_id, algo.name())
+            alert = algo.evaluate(event, thresholds=thresholds or None)
             if alert:
                 alert_dict = alert.to_dict()
                 msg_key = f"{tenant_id}:{event_id}" if tenant_id else None

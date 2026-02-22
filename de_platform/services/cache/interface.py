@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 
 class CacheInterface(ABC):
-    """Key-value caching with TTL support."""
+    """Key-value caching with TTL support and optional pub-sub channels."""
 
     @abstractmethod
     def get(self, key: str) -> Any | None: ...
@@ -31,3 +31,12 @@ class CacheInterface(ABC):
 
     @abstractmethod
     def health_check(self) -> bool: ...
+
+    def publish_channel(self, channel: str, message: str) -> None:
+        """Publish a message to a pub-sub channel."""
+
+    def subscribe_channel(self, channel: str, callback: Callable[[str], None]) -> None:
+        """Subscribe to a pub-sub channel with a callback."""
+
+    def unsubscribe_channel(self, channel: str) -> None:
+        """Unsubscribe from a pub-sub channel."""

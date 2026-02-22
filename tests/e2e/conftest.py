@@ -56,6 +56,7 @@ class InfraConfig:
             "DB_WAREHOUSE_URL": self.postgres_url,
             "DB_ALERTS_URL": self.postgres_url,
             "DB_CURRENCY_URL": self.postgres_url,
+            "DB_CLIENT_CONFIG_URL": self.postgres_url,
             # ClickHouse instances (all point to same server)
             **{f"DB_CLICKHOUSE_{k}": v for k, v in ch_vars.items()},
             **{f"DB_EVENTS_{k}": v for k, v in ch_vars.items()},
@@ -172,6 +173,7 @@ def _run_schema_init(request: Any) -> None:
     asyncio.get_event_loop().run_until_complete(pg_db.connect_async())
     MigrationRunner(pg_db, db_name="warehouse").up()
     MigrationRunner(pg_db, db_name="alerts").up()
+    MigrationRunner(pg_db, db_name="client_config").up()
     asyncio.get_event_loop().run_until_complete(pg_db.disconnect_async())
 
     # ClickHouse: execute init SQL
@@ -302,7 +304,12 @@ def shared_pipeline(request, infra, tmp_path_factory):
 
     from tests.helpers.harness import SharedPipeline
 
+    # Under xdist, getbasetemp() is per-worker (e.g. .../gw0/);
+    # use .parent so all workers share the same lock/info files
+    # and only one pipeline is started.
     lock_dir = tmp_path_factory.getbasetemp()
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        lock_dir = lock_dir.parent
     pipeline = SharedPipeline(infra, lock_dir)
     pipeline.start()
     yield pipeline

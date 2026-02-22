@@ -272,3 +272,63 @@ async def test_primary_key_format() -> None:
     enriched = mq.consume_one(ORDERS_PERSISTENCE)
     assert enriched is not None
     assert enriched["primary_key"] == "tenant_abc_order_order123_2026-01-15"
+
+
+# ── Client config mode gating tests ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_batch_mode_tenant_not_forwarded_to_algos() -> None:
+    """Events for batch-mode tenants go to persistence but not algos."""
+    module, mq, cache, db = await _setup()
+    # Set tenant to batch mode via config cache
+    cache.set("client_config:t1", {"mode": "batch"})
+    # Invalidate local cache so the new value is picked up
+    module.config_cache._local.clear()
+
+    mq.publish(TRADE_NORMALIZATION, _make_order_msg())
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+
+    assert mq.consume_one(ORDERS_PERSISTENCE) is not None
+    assert mq.consume_one(TRADES_ALGOS) is None
+
+
+@pytest.mark.asyncio
+async def test_realtime_mode_tenant_forwarded_to_algos() -> None:
+    """Events for realtime-mode tenants go to both persistence and algos."""
+    module, mq, cache, db = await _setup()
+    cache.set("client_config:t1", {"mode": "realtime"})
+    module.config_cache._local.clear()
+
+    mq.publish(TRADE_NORMALIZATION, _make_order_msg())
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+
+    assert mq.consume_one(ORDERS_PERSISTENCE) is not None
+    assert mq.consume_one(TRADES_ALGOS) is not None
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_tenant_defaults_to_realtime() -> None:
+    """Tenants without config default to realtime (algos forwarding)."""
+    module, mq, cache, db = await _setup()
+    # No config set for tenant — should default to realtime
+
+    mq.publish(TRADE_NORMALIZATION, _make_order_msg())
+    module._poll_and_process(TRADE_NORMALIZATION, "trade")
+
+    assert mq.consume_one(ORDERS_PERSISTENCE) is not None
+    assert mq.consume_one(TRADES_ALGOS) is not None
+
+
+@pytest.mark.asyncio
+async def test_batch_mode_transaction_not_forwarded_to_algos() -> None:
+    """Transaction events for batch tenants skip TRANSACTIONS_ALGOS."""
+    module, mq, cache, db = await _setup()
+    cache.set("client_config:t1", {"mode": "batch"})
+    module.config_cache._local.clear()
+
+    mq.publish(TX_NORMALIZATION, _make_tx_msg())
+    module._poll_and_process(TX_NORMALIZATION, "transaction")
+
+    assert mq.consume_one(TRANSACTIONS_PERSISTENCE) is not None
+    assert mq.consume_one(TRANSACTIONS_ALGOS) is None

@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 from de_platform.services.cache.interface import CacheInterface
 
 
 class MemoryCache(CacheInterface):
-    """In-memory cache with TTL support for unit testing."""
+    """In-memory cache with TTL support and pub-sub for unit testing."""
 
     def __init__(self) -> None:
         # key -> (value, expiry_timestamp_or_none)
         self._data: dict[str, tuple[Any, float | None]] = {}
+        self._subscribers: dict[str, list[Callable[[str], None]]] = {}
 
     def get(self, key: str) -> Any | None:
         entry = self._data.get(key)
@@ -41,3 +42,13 @@ class MemoryCache(CacheInterface):
 
     def health_check(self) -> bool:
         return True
+
+    def publish_channel(self, channel: str, message: str) -> None:
+        for callback in self._subscribers.get(channel, []):
+            callback(message)
+
+    def subscribe_channel(self, channel: str, callback: Callable[[str], None]) -> None:
+        self._subscribers.setdefault(channel, []).append(callback)
+
+    def unsubscribe_channel(self, channel: str) -> None:
+        self._subscribers.pop(channel, None)
