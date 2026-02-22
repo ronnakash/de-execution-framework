@@ -19,7 +19,7 @@ from de_platform.services.message_queue.memory_queue import MemoryQueue
 from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
-pytestmark = pytest.mark.real_infra
+pytestmark = pytest.mark.integration
 
 
 VALID_ORDER = {

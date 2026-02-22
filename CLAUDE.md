@@ -10,12 +10,12 @@ make setup                   # venv + core deps only (unit tests)
 make setup-full              # venv + core + infra deps (integration/e2e tests)
 source .venv/bin/activate
 
-# Tests
-make test                    # all tests (de_platform/ + tests/)
-make test-unit               # unit tests only (no infra deps required)
-make test-e2e                # end-to-end pipeline tests (tests/e2e/, in-memory only)
-make test-integration        # docker-compose-backed postgres tests
-make test-real-infra         # full real-infra e2e tests (requires make infra-up)
+# Tests (3-tier: unit / integration / e2e)
+make test                    # unit tests only (de_platform/ + tests/unit/, no infra)
+make test-unit               # same as make test
+make test-integration        # module + service integration tests (requires make infra-up)
+make test-e2e                # full pipeline E2E tests (requires make infra-up)
+make test-all                # all tests (unit + integration + e2e)
 
 # Run a single test
 pytest de_platform/modules/normalizer/tests/test_main.py -v
@@ -106,13 +106,15 @@ Fraud detection pipeline built on top of the framework:
 
 **Pipeline modules:** `normalizer` (enrich + dedup), `persistence` (buffer → ClickHouse + filesystem), `algos` (fraud algorithms → alerts), `data_api` (HTTP API + static UI at `/ui`), `currency_loader` (fetches rates into DB)
 
-### Testing Patterns
+### Testing Patterns (3-tier)
 
-**Unit tests** (per-module in `de_platform/modules/<name>/tests/`): use all memory implementations, instantiate the module directly without the DI container. No infra deps required.
+**Unit tests** (`de_platform/*/tests/` + `tests/unit/`): use all memory implementations, instantiate modules directly without the DI container. No infra deps required. Includes in-memory pipeline scenario tests (`tests/unit/test_scenarios.py` via `MemoryHarness`, `tests/unit/test_pipeline_e2e.py` for narrative pipeline walkthrough).
 
-**E2E tests** (`tests/e2e/`): shared test scenarios in `tests/helpers/scenarios.py` run via harness implementations — `MemoryHarness` (in-memory, manual stepping) and `SubprocessHarness` (real infra, OS subprocesses). The `PipelineHarness` protocol and implementations live in `tests/helpers/harness.py`. `tests/e2e/test_pipeline.py` has 5 narrative tests using in-memory stubs directly. Real-infra e2e tests use docker-compose services (no testcontainers).
+**Integration tests** (`tests/integration/`): individual modules tested against real infrastructure services. Two subdirs: `services/` (e.g. `test_postgres_database.py`) and `modules/` (e.g. `test_normalizer_redis.py`). Marked `@pytest.mark.integration`. Requires `make infra-up`.
 
-**Integration tests** (`conftest.py` root fixtures): `warehouse_db` fixture connects to docker-compose Postgres, runs real migrations, then yields a connected `PostgresDatabase`. Skipped automatically when asyncpg is not installed. Marked with `-k "postgres"`.
+**E2E tests** (`tests/e2e/`): full pipeline — 6 module subprocesses, all infrastructure services, end-to-end message flow. Session-scoped `SharedPipeline` starts subprocesses once; each test gets a `RealInfraHarness` with unique `tenant_id` for data isolation. Marked `@pytest.mark.e2e`. Requires `make infra-up`.
+
+**Test helpers** (`tests/helpers/`): `PipelineHarness` protocol and implementations (`MemoryHarness`, `SharedPipeline`, `RealInfraHarness`) in `harness.py`. 10 shared scenarios in `scenarios.py`. Event factories in `events.py`. Ingestion helpers in `ingestion.py`.
 
 **DEVCONTAINER detection:** When `DEVCONTAINER=1` is set (automatic in devcontainer), test fixtures use Docker DNS names (postgres, redis, kafka:29092). Otherwise they default to localhost.
 

@@ -16,7 +16,7 @@ from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 from de_platform.services.logger.factory import LoggerFactory
 
 
-pytestmark = pytest.mark.real_infra
+pytestmark = pytest.mark.integration
 
 
 async def test_currency_loader_inserts_to_postgres(warehouse_db):

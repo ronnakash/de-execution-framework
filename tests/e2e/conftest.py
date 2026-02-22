@@ -1,4 +1,4 @@
-"""Shared infrastructure fixtures for real-infra E2E tests.
+"""Shared infrastructure fixtures for integration and E2E tests.
 
 Uses docker-compose services (started via ``make infra-up`` or the devcontainer).
 When DEVCONTAINER=1, uses Docker DNS names (postgres, redis, kafka:29092, etc.);
@@ -123,14 +123,15 @@ def infra() -> InfraConfig:
 def _init_schemas(request, tmp_path_factory) -> None:
     """Create Postgres tables (via migrations) and ClickHouse tables once per session.
 
-    Only runs when at least one test in the session is marked with ``real_infra``.
-    Uses a file lock to ensure only one xdist worker performs initialization;
-    other workers wait for completion.
+    Only runs when at least one test in the session is marked with ``integration``
+    or ``e2e``.  Uses a file lock to ensure only one xdist worker performs
+    initialization; other workers wait for completion.
     """
-    has_real_infra = any(
-        item.get_closest_marker("real_infra") for item in request.session.items
+    has_infra_tests = any(
+        item.get_closest_marker("integration") or item.get_closest_marker("e2e")
+        for item in request.session.items
     )
-    if not has_real_infra:
+    if not has_infra_tests:
         return
 
     pytest.importorskip("asyncpg")
@@ -282,33 +283,20 @@ def _seed_currency_rates(db: Any) -> None:
         pass  # rates may already exist
 
 
-# ── Function-scoped cleanup ──────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def _cleanup_between_tests(request) -> None:
-    """No-op: tenant-based isolation eliminates the need for data cleanup.
-
-    Each test uses a unique tenant_id (INTEGRATION_CLIENT_{uuid}), so data from
-    different tests never interferes. Kafka consumers use auto.offset.reset=latest
-    with unique consumer groups, so stale messages are never replayed.
-    """
-
-
 # ── Session-scoped shared pipeline ──────────────────────────────────────────
 
 
 @pytest.fixture(scope="session")
 def shared_pipeline(request, infra, tmp_path_factory):
-    """Session-scoped shared pipeline for real-infra tests.
+    """Session-scoped shared pipeline for E2E tests.
 
     Starts 6 module subprocesses once and shares them across all tests.
-    Only activates when at least one test is marked with ``real_infra``.
+    Only activates when at least one test is marked with ``e2e``.
     """
-    has_real_infra = any(
-        item.get_closest_marker("real_infra") for item in request.session.items
+    has_e2e = any(
+        item.get_closest_marker("e2e") for item in request.session.items
     )
-    if not has_real_infra:
+    if not has_e2e:
         yield None
         return
 

@@ -65,7 +65,7 @@ These are the most valuable "integration" tests — they verify that each module
 
 ---
 
-## Proposed Structure
+## Current Structure
 
 Three tiers with clear boundaries:
 
@@ -125,7 +125,7 @@ Three tiers with clear boundaries:
 
 ---
 
-## Proposed Directory Layout
+## Current Directory Layout
 
 ```
 de_platform/
@@ -166,7 +166,7 @@ tests/
     diagnostics.py          # Test diagnostics
 ```
 
-## Proposed Makefile Commands
+## Current Makefile Commands
 
 ```makefile
 test-unit:
@@ -185,7 +185,7 @@ test-all:  # Everything (requires Docker)
     $(PYTEST) -v --tb=short
 ```
 
-## Migration Steps
+## Migration Steps (completed)
 
 1. Create `tests/unit/` directory, move `test_pipeline.py` and `test_memory.py` there
 2. Restructure `tests/integration/` into `services/` and `modules/` subdirs

@@ -21,7 +21,7 @@ from de_platform.services.message_queue.memory_queue import MemoryQueue
 from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
-pytestmark = pytest.mark.real_infra
+pytestmark = pytest.mark.integration
 
 
 async def test_data_api_serves_alerts_from_postgres(alerts_db, clickhouse_db):

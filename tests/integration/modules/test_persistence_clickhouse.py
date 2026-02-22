@@ -19,7 +19,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
-pytestmark = pytest.mark.real_infra
+pytestmark = pytest.mark.integration
 
 
 def _unique_tenant() -> str:

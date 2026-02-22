@@ -1,11 +1,9 @@
-"""Real-infra E2E tests (container-style).
+"""Unit tests: pipeline scenarios via MemoryHarness.
 
-All tests run against a single shared pipeline of 6 module subprocesses
-with real Postgres, ClickHouse, Redis, Kafka, and MinIO (via docker-compose).
+All pipeline modules are driven manually (step-by-step) using in-memory
+stubs for all infrastructure.  Fastest test suite — no Docker needed.
 
 34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
-
-Requires: ``pytest -m real_infra`` or ``make test-real-infra``.
 """
 
 from __future__ import annotations
@@ -13,21 +11,21 @@ from __future__ import annotations
 import pytest
 
 from tests.helpers.events import FULL_MATRIX
-from tests.helpers.harness import RealInfraHarness
+from tests.helpers.harness import MemoryHarness
 from tests.helpers import scenarios
-
-pytestmark = [pytest.mark.real_infra]
 
 
 @pytest.fixture
-async def harness(shared_pipeline):
-    async with RealInfraHarness(shared_pipeline) as h:
+async def harness():
+    async with MemoryHarness() as h:
         yield h
 
 
 @pytest.fixture
-async def harness_suspicious_cp(shared_pipeline):
-    async with RealInfraHarness(shared_pipeline) as h:
+async def harness_suspicious_cp():
+    async with MemoryHarness(
+        algos_config={"suspicious-counterparty-ids": "bad-cp-1"}
+    ) as h:
         yield h
 
 

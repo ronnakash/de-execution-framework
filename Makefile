@@ -1,19 +1,22 @@
-.PHONY: test test-unit test-integration test-e2e test-real-infra local-unit local-e2e local-e2e-infra lint format run migrate infra-up infra-down setup setup-full
+.PHONY: test test-unit test-integration test-e2e test-all local-unit local-e2e lint format run migrate infra-up infra-down setup setup-full
 
 PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
 
 test:
-	$(PYTEST) de_platform/ tests/ -v -m "not real_infra"
+	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e"
 
 test-unit:
-	$(PYTEST) de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
+	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e"
+
+test-integration:
+	$(PYTEST) tests/integration/ -v -m integration --tb=short
 
 test-e2e:
-	$(PYTEST) tests/e2e/ -v -m "not real_infra" --tb=short
+	$(PYTEST) tests/e2e/ -v -m e2e --tb=short -n auto
 
-test-real-infra:
-	$(PYTEST) tests/e2e/ tests/integration/ -v -m real_infra --tb=short -n 12
+test-all:
+	$(PYTEST) -v --tb=short
 
 lint:
 	$(PYTHON) -m ruff check de_platform/
@@ -27,17 +30,11 @@ run:
 migrate:
 	$(PYTHON) -m de_platform migrate $(cmd) $(args)
 
-test-integration:
-	$(PYTEST) tests/integration/ -v -m real_infra --tb=short
-
 local-unit: setup
-	.venv/bin/python -m pytest de_platform/ tests/ -v -k "not postgres" -m "not real_infra"
+	.venv/bin/python -m pytest de_platform/ tests/unit/ -v -m "not integration and not e2e"
 
-local-e2e: setup
-	.venv/bin/python -m pytest tests/e2e/ -v -m "not real_infra" --tb=short
-
-local-e2e-infra: setup-full infra-up
-	.venv/bin/python -m pytest tests/e2e/ tests/integration/ -v -m real_infra --tb=short -n 4
+local-e2e: setup-full infra-up
+	.venv/bin/python -m pytest tests/e2e/ -v -m e2e --tb=short
 
 infra-up:
 	docker compose -f .devcontainer/docker-compose.yml up -d postgres redis minio zookeeper kafka clickhouse prometheus loki grafana

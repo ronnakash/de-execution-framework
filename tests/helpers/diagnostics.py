@@ -57,8 +57,8 @@ class PipelineSnapshot:
 class TestDiagnostics:
     """Collects pipeline state for test debugging.
 
-    Supports both in-process (ContainerHarness) and subprocess
-    (SubprocessHarness) setups.
+    Supports both in-memory (MemoryHarness) and real-infra
+    (SharedPipeline / RealInfraHarness) setups.
     """
 
     def __init__(

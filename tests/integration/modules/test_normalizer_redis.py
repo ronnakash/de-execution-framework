@@ -24,7 +24,7 @@ from de_platform.services.message_queue.memory_queue import MemoryQueue
 from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
-pytestmark = pytest.mark.real_infra
+pytestmark = pytest.mark.integration
 
 
 def _make_raw_order(id_: str | None = None, tenant_id: str = "integ-test") -> dict:

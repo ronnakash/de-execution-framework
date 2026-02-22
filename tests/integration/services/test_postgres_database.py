@@ -2,6 +2,8 @@ import os
 
 import pytest
 
+pytestmark = pytest.mark.integration
+
 pytest.importorskip("asyncpg")
 
 from de_platform.services.database.postgres_database import PostgresDatabase  # noqa: E402
