@@ -39,6 +39,7 @@ async def _setup_module(
     module = ClientConfigModule(
         config=config, logger=logger, db=db, cache=cache,
         lifecycle=lifecycle, metrics=NoopMetrics(),
+        secrets=EnvSecrets(overrides={}),
     )
     await module.initialize()
     return module, db, cache

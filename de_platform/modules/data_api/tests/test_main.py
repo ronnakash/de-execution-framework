@@ -67,7 +67,7 @@ async def _setup_module(
 
     module = DataApiModule(
         config=config, logger=logger, mq=mq, db_factory=db_factory, lifecycle=lifecycle,
-        metrics=NoopMetrics(),
+        metrics=NoopMetrics(), secrets=EnvSecrets(overrides={}),
     )
     await module.initialize()
     return module, mq, db

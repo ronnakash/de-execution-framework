@@ -324,6 +324,8 @@ class MemoryHarness:
         db_factory = DatabaseFactory({})
         db_factory.register_instance("events", self.clickhouse_db)
         db_factory.register_instance("alerts", self.alerts_db)
+        from de_platform.services.secrets.env_secrets import EnvSecrets
+
         api = DataApiModule(
             config=ModuleConfig({}),
             logger=LoggerFactory(default_impl="memory"),
@@ -331,6 +333,7 @@ class MemoryHarness:
             db_factory=db_factory,
             lifecycle=LifecycleManager(),
             metrics=NoopMetrics(),
+            secrets=EnvSecrets(overrides={}),
         )
         await api.initialize()
         app = api._create_app()
@@ -542,6 +545,8 @@ class SharedPipeline:
             "algos": f"{TRADES_ALGOS},{TRANSACTIONS_ALGOS}",
         }
 
+        _jwt_secret = "e2e-test-jwt-secret-at-least-32-bytes-long"
+
         module_specs: list[tuple[str, list[str], list[str]]] = [
             ("rest_starter", ["--mq", "kafka"], ["--port", str(self.rest_port)]),
             ("kafka_starter", ["--mq", "kafka"], []),
@@ -558,6 +563,11 @@ class SharedPipeline:
              ["--port", str(self.auth_port)]),
         ]
 
+        # Per-module extra env vars (JWT_SECRET only for auth module)
+        _module_env_overrides: dict[str, dict[str, str]] = {
+            "auth": {"JWT_SECRET": _jwt_secret},
+        }
+
         for module_name, db_flags, extra_flags in module_specs:
             hp = _free_port()
             self._health_ports[module_name] = hp
@@ -565,7 +575,7 @@ class SharedPipeline:
             # Each module gets its own consumer group to avoid cross-module
             # rebalance storms (each module subscribes to different topics;
             # sharing a group causes cascading rebalances as topics are added).
-            module_env = {}
+            module_env = dict(_module_env_overrides.get(module_name, {}))
             if module_name in _subscribe:
                 module_env["MQ_KAFKA_SUBSCRIBE_TOPICS"] = _subscribe[module_name]
             self._procs[module_name] = _launch_module(

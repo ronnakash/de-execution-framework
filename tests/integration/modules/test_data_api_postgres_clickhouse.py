@@ -19,6 +19,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
 from de_platform.services.metrics.noop_metrics import NoopMetrics
+from de_platform.services.secrets.env_secrets import EnvSecrets
 
 
 pytestmark = pytest.mark.integration
@@ -56,6 +57,7 @@ async def test_data_api_serves_alerts_from_postgres(alerts_db, clickhouse_db):
         db_factory=db_factory,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
+        secrets=EnvSecrets(overrides={}),
     )
     await api.initialize()
     app = api._create_app()
@@ -104,6 +106,7 @@ async def test_data_api_serves_events_from_clickhouse(alerts_db, clickhouse_db):
         db_factory=db_factory,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
+        secrets=EnvSecrets(overrides={}),
     )
     await api.initialize()
     app = api._create_app()

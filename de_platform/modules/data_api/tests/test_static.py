@@ -13,6 +13,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
 from de_platform.services.metrics.noop_metrics import NoopMetrics
+from de_platform.services.secrets.env_secrets import EnvSecrets
 
 
 async def _make_app() -> DataApiModule:
@@ -27,6 +28,7 @@ async def _make_app() -> DataApiModule:
         db_factory=db_factory,
         lifecycle=LifecycleManager(),
         metrics=NoopMetrics(),
+        secrets=EnvSecrets(overrides={}),
     )
     await module.initialize()
     return module

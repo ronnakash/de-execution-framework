@@ -72,8 +72,6 @@ class InfraConfig:
             "FS_MINIO_SECRET_KEY": self.minio_secret_key,
             "FS_MINIO_BUCKET": self.minio_bucket,
             "FS_MINIO_SECURE": "false",
-            # Auth
-            "JWT_SECRET": "e2e-test-jwt-secret-at-least-32-bytes-long",
         }
         return result
 

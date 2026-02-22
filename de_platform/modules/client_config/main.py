@@ -62,7 +62,7 @@ class ClientConfigModule(Module):
         cache: CacheInterface,
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
-        secrets: SecretsInterface | None = None,
+        secrets: SecretsInterface,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -96,7 +96,7 @@ class ClientConfigModule(Module):
 
     def _create_app(self) -> web.Application:
         middlewares: list = []
-        jwt_secret = self.secrets.get("JWT_SECRET") if self.secrets else None
+        jwt_secret = self.secrets.get("JWT_SECRET")
         if jwt_secret:
             from de_platform.pipeline.auth_middleware import create_auth_middleware
 
