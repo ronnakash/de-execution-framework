@@ -8,6 +8,7 @@ dependencies = [
     "prometheus-client>=0.20",
     "pyjwt>=2.8",
     "bcrypt>=4.0",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]

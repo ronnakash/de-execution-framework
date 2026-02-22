@@ -1,0 +1,16 @@
+{
+  "name": "task_scheduler",
+  "display_name": "Task Scheduler",
+  "description": "Centralized task scheduling and tracking. Schedules recurring jobs via cron, tracks run history, and supports custom argument generation per task.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "port",
+      "description": "HTTP port for the REST API",
+      "required": false,
+      "type": "integer",
+      "default": "8006"
+    }
+  ]
+}

@@ -9,7 +9,7 @@ Each harness provides a uniform interface for test scenarios to:
 
 Implementations:
   - MemoryHarness:      in-memory stubs, manual step-by-step pipeline driving
-  - SharedPipeline:     session-scoped, starts 10 module subprocesses once
+  - SharedPipeline:     session-scoped, starts 11 module subprocesses once
   - RealInfraHarness:   per-test harness backed by SharedPipeline
 """
 
@@ -438,7 +438,7 @@ def _wait_for_http_sync(url: str, timeout: float = 45.0) -> None:
 
 
 class SharedPipeline:
-    """Session-scoped pipeline that starts 10 module subprocesses once.
+    """Session-scoped pipeline that starts 11 module subprocesses once.
 
     Uses a file lock so only ONE xdist worker starts the pipeline;
     other workers connect to the same subprocesses.  The last worker
@@ -465,6 +465,7 @@ class SharedPipeline:
         self.auth_port: int = 0
         self.alert_manager_port: int = 0
         self.data_audit_port: int = 0
+        self.task_scheduler_port: int = 0
         self._health_ports: dict[str, int] = {}
         self._clickhouse_db: Any = None
         self._kafka_producer: Any = None
@@ -484,6 +485,7 @@ class SharedPipeline:
                     self.auth_port = info.get("auth_port", 0)
                     self.alert_manager_port = info.get("alert_manager_port", 0)
                     self.data_audit_port = info.get("data_audit_port", 0)
+                    self.task_scheduler_port = info.get("task_scheduler_port", 0)
                     self._health_ports = info.get("health_ports", {})
                 else:
                     self._start_subprocesses()
@@ -494,6 +496,7 @@ class SharedPipeline:
                         "auth_port": self.auth_port,
                         "alert_manager_port": self.alert_manager_port,
                         "data_audit_port": self.data_audit_port,
+                        "task_scheduler_port": self.task_scheduler_port,
                         "health_ports": self._health_ports,
                         "pids": {n: p.pid for n, p in self._procs.items()},
                     }))
@@ -548,6 +551,7 @@ class SharedPipeline:
         self.auth_port = _free_port()
         self.alert_manager_port = _free_port()
         self.data_audit_port = _free_port()
+        self.task_scheduler_port = _free_port()
 
         # Per-module Kafka topic subscriptions: pre-subscribe all topics at
         # connect time to avoid incremental rebalance storms.
@@ -587,6 +591,8 @@ class SharedPipeline:
              ["--port", str(self.auth_port)]),
             ("data_audit", ["--db", "data_audit=postgres", "--mq", "kafka"],
              ["--port", str(self.data_audit_port)]),
+            ("task_scheduler", ["--db", "task_scheduler=postgres"],
+             ["--port", str(self.task_scheduler_port)]),
         ]
 
         # Per-module extra env vars (JWT_SECRET only for auth module)

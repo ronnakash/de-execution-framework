@@ -59,6 +59,7 @@ class InfraConfig:
             "DB_CLIENT_CONFIG_URL": self.postgres_url,
             "DB_AUTH_URL": self.postgres_url,
             "DB_DATA_AUDIT_URL": self.postgres_url,
+            "DB_TASK_SCHEDULER_URL": self.postgres_url,
             # ClickHouse instances (all point to same server)
             **{f"DB_CLICKHOUSE_{k}": v for k, v in ch_vars.items()},
             **{f"DB_EVENTS_{k}": v for k, v in ch_vars.items()},
@@ -179,6 +180,7 @@ def _run_schema_init(request: Any) -> None:
     MigrationRunner(pg_db, db_name="auth").up()
     MigrationRunner(pg_db, db_name="alert_manager").up()
     MigrationRunner(pg_db, db_name="data_audit").up()
+    MigrationRunner(pg_db, db_name="task_scheduler").up()
     asyncio.get_event_loop().run_until_complete(pg_db.disconnect_async())
 
     # ClickHouse: execute init SQL
