@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS file_audit;
+DROP TABLE IF EXISTS daily_audit;

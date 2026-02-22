@@ -1,0 +1,30 @@
+{
+  "name": "data_audit",
+  "display_name": "Data Audit Service",
+  "description": "Tracks incoming data volumes, processed counts, errors, and duplicates per tenant. Consumes from pipeline Kafka topics and provides a REST API for querying audit data.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "port",
+      "description": "HTTP port for the REST API",
+      "required": false,
+      "type": "integer",
+      "default": "8005"
+    },
+    {
+      "name": "flush-interval",
+      "description": "Seconds between periodic counter flushes to DB",
+      "required": false,
+      "type": "integer",
+      "default": "5"
+    },
+    {
+      "name": "flush-threshold",
+      "description": "Number of messages before flushing counters to DB",
+      "required": false,
+      "type": "integer",
+      "default": "100"
+    }
+  ]
+}
