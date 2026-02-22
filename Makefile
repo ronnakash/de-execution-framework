@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-e2e test-all local-unit local-e2e lint format run migrate infra-up infra-down setup setup-full
+.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui infra-up infra-down setup setup-full
 
 PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
@@ -14,6 +14,9 @@ test-integration:
 
 test-e2e:
 	$(PYTEST) tests/e2e/ -v -m e2e --tb=short -n auto
+
+test-e2e-ui:
+	$(PYTEST) tests/e2e_ui/ -v -m e2e_ui --tb=short
 
 test-all:
 	$(PYTEST) -v --tb=short
@@ -41,6 +44,12 @@ infra-up:
 
 infra-down:
 	docker compose -f .devcontainer/docker-compose.yml down
+
+build-ui:
+	cd ui && npm install && npm run build
+
+dev-ui:
+	cd ui && npm run dev
 
 setup:
 	python3.12 -m venv .venv

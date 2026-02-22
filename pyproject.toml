@@ -23,6 +23,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.5",
+    "playwright>=1.40",
     "ruff>=0.8",
     "mypy>=1.13",
 ]
@@ -39,6 +40,7 @@ asyncio_mode = "auto"
 markers = [
     "integration: tests requiring real infrastructure services (Postgres, ClickHouse, Redis, Kafka, MinIO)",
     "e2e: full pipeline end-to-end tests with all services and module subprocesses",
+    "e2e_ui: browser-based UI tests requiring Playwright and running backend services",
 ]
 
 [tool.ruff]
