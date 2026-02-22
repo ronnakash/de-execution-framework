@@ -1,0 +1,10 @@
+{
+  "name": "client_config",
+  "display_name": "Client Config API",
+  "description": "REST API for managing per-tenant client configuration",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {"name": "port", "type": "integer", "default": 8003, "required": false}
+  ]
+}
