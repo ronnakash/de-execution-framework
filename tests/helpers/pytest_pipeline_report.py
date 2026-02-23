@@ -206,12 +206,16 @@ class PipelineReportPlugin:
             except Exception:
                 pass
 
-        # Collect step data from harness (if available)
+        # Collect step data from harness or bare step_logger fixture
         try:
             for fixture_value in item.funcargs.values():
                 if hasattr(fixture_value, 'step_logger'):
                     self._current.steps = fixture_value.step_logger.to_dicts()
                     break
+            if not self._current.steps and 'step_logger' in item.funcargs:
+                sl = item.funcargs['step_logger']
+                if hasattr(sl, 'to_dicts'):
+                    self._current.steps = sl.to_dicts()
         except Exception:
             pass
 

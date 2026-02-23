@@ -23,6 +23,7 @@ from tests.e2e.conftest import (  # noqa: F401
     infra,
     shared_pipeline,
 )
+from tests.helpers.step_logger import StepLogger
 
 
 @pytest.fixture(scope="session")
@@ -60,3 +61,9 @@ def logged_in_page(page, base_url):
     page.click('button[type="submit"]')
     page.wait_for_url("**/alerts**", timeout=10000)
     return page
+
+
+@pytest.fixture
+def step_logger():
+    """Provide a StepLogger for UI tests (collected by the report plugin)."""
+    return StepLogger()

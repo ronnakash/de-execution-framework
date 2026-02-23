@@ -22,10 +22,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from de_platform.pipeline.topics import TRADE_NORMALIZATION
-
 from tests.helpers.events import (
     EVENT_FACTORY,
     EVENT_TABLE,
@@ -65,36 +64,53 @@ async def scenario_valid_events(
 ) -> None:
     """100 valid events -> 100 enriched rows in the data table, accessible via API."""
     tenant_id = harness.tenant_id
-    events = [EVENT_FACTORY[event_type](tenant_id=tenant_id) for _ in range(100)]
-    await harness.ingest(method, event_type, events)
-
     table = EVENT_TABLE[event_type]
-    rows = await harness.wait_for_rows(table, expected=100)
-    assert len(rows) == 100, f"Expected 100 rows in {table}, got {len(rows)}"
 
-    # Normalizer must have enriched every row
-    for row in rows:
-        assert "primary_key" in row, "primary_key missing after normalization"
-        assert "normalized_at" in row, "normalized_at missing after normalization"
-        if event_type in ("order", "execution"):
-            assert "notional_usd" in row
-        else:
-            assert "amount_usd" in row
+    async with harness.step(
+        "Ingest events",
+        f"Publish 100 valid {event_type} events via {method}",
+    ):
+        events = [EVENT_FACTORY[event_type](tenant_id=tenant_id) for _ in range(100)]
+        await harness.ingest(method, event_type, events)
 
-    # No validation errors should exist (errors table checked after valid rows
-    # are confirmed, so the pipeline has finished processing all events)
-    error_rows = await harness.wait_for_rows("normalization_errors", expected=0)
-    assert error_rows == [], (
-        f"Expected 0 normalization errors, got {len(error_rows)}"
-    )
+    async with harness.step(
+        "Wait for persistence",
+        f"Wait for 100 rows to appear in {table}",
+    ):
+        rows = await harness.wait_for_rows(table, expected=100)
+        assert len(rows) == 100, f"Expected 100 rows in {table}, got {len(rows)}"
 
-    # Events must be accessible via the Data API
-    status, body = await harness.query_api(
-        f"events/{REST_ENDPOINT[event_type]}",
-        {"tenant_id": tenant_id, "limit": "200"},
-    )
-    assert status == 200
-    assert len(body) == 100, f"API returned {len(body)} events, expected 100"
+    async with harness.step(
+        "Verify enrichment",
+        "Check all rows have primary_key, normalized_at, and USD conversion",
+    ):
+        for row in rows:
+            assert "primary_key" in row, "primary_key missing after normalization"
+            assert "normalized_at" in row, "normalized_at missing after normalization"
+            if event_type in ("order", "execution"):
+                assert "notional_usd" in row
+            else:
+                assert "amount_usd" in row
+
+    async with harness.step(
+        "Check no errors",
+        "Verify 0 rows in normalization_errors table",
+    ):
+        error_rows = await harness.wait_for_rows("normalization_errors", expected=0)
+        assert error_rows == [], (
+            f"Expected 0 normalization errors, got {len(error_rows)}"
+        )
+
+    async with harness.step(
+        "Query Data API",
+        f"Verify all 100 {event_type} events via GET /events/{REST_ENDPOINT[event_type]}",
+    ):
+        status, body = await harness.query_api(
+            f"events/{REST_ENDPOINT[event_type]}",
+            {"tenant_id": tenant_id, "limit": "200"},
+        )
+        assert status == 200
+        assert len(body) == 100, f"API returned {len(body)} events, expected 100"
 
 
 async def scenario_invalid_events(
@@ -102,25 +118,35 @@ async def scenario_invalid_events(
 ) -> None:
     """100 invalid events -> 100 rows in normalization_errors, 0 in valid table."""
     tenant_id = harness.tenant_id
-    events = [make_invalid(event_type, tenant_id=tenant_id) for _ in range(100)]
-    await harness.ingest(method, event_type, events)
-
     table = EVENT_TABLE[event_type]
 
-    # All invalid events should end up as errors
-    error_rows = await harness.wait_for_rows("normalization_errors", expected=100)
-    assert len(error_rows) == 100, (
-        f"Expected 100 error rows, got {len(error_rows)}"
-    )
-    for row in error_rows:
-        assert row.get("event_type") == event_type
+    async with harness.step(
+        "Ingest invalid events",
+        f"Publish 100 invalid {event_type} events via {method}",
+    ):
+        events = [make_invalid(event_type, tenant_id=tenant_id) for _ in range(100)]
+        await harness.ingest(method, event_type, events)
 
-    # Nothing should be in the valid table
-    valid_rows = await harness.wait_for_rows(table, expected=0)
-    assert valid_rows == [], (
-        f"Valid table '{table}' must be empty for 100% invalid input, "
-        f"found {len(valid_rows)}"
-    )
+    async with harness.step(
+        "Wait for error rows",
+        "Wait for 100 rows in normalization_errors table",
+    ):
+        error_rows = await harness.wait_for_rows("normalization_errors", expected=100)
+        assert len(error_rows) == 100, (
+            f"Expected 100 error rows, got {len(error_rows)}"
+        )
+        for row in error_rows:
+            assert row.get("event_type") == event_type
+
+    async with harness.step(
+        "Verify no valid rows",
+        f"Confirm {table} table is empty (all events were invalid)",
+    ):
+        valid_rows = await harness.wait_for_rows(table, expected=0)
+        assert valid_rows == [], (
+            f"Valid table '{table}' must be empty for 100% invalid input, "
+            f"found {len(valid_rows)}"
+        )
 
 
 async def scenario_duplicate_events(
@@ -132,20 +158,31 @@ async def scenario_duplicate_events(
     primary_key but have different message_ids -> classified as external duplicates.
     """
     tenant_id = harness.tenant_id
-    fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
-    events = [EVENT_FACTORY[event_type](id_=fixed_id, tenant_id=tenant_id) for _ in range(100)]
-    await harness.ingest(method, event_type, events)
-
     table = EVENT_TABLE[event_type]
-    valid_rows = await harness.wait_for_rows(table, expected=1)
-    dup_rows = await harness.wait_for_rows("duplicates", expected=99)
 
-    assert len(valid_rows) == 1, (
-        f"Expected exactly 1 valid row, got {len(valid_rows)}"
-    )
-    assert len(dup_rows) == 99, (
-        f"Expected 99 duplicate rows, got {len(dup_rows)}"
-    )
+    async with harness.step(
+        "Ingest duplicate events",
+        f"Publish the same {event_type} event 100 times via {method}",
+    ):
+        fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
+        events = [
+            EVENT_FACTORY[event_type](id_=fixed_id, tenant_id=tenant_id)
+            for _ in range(100)
+        ]
+        await harness.ingest(method, event_type, events)
+
+    async with harness.step(
+        "Verify deduplication",
+        f"Expect 1 valid row in {table} and 99 rows in duplicates",
+    ):
+        valid_rows = await harness.wait_for_rows(table, expected=1)
+        dup_rows = await harness.wait_for_rows("duplicates", expected=99)
+        assert len(valid_rows) == 1, (
+            f"Expected exactly 1 valid row, got {len(valid_rows)}"
+        )
+        assert len(dup_rows) == 99, (
+            f"Expected 99 duplicate rows, got {len(dup_rows)}"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -166,14 +203,20 @@ async def scenario_internal_dedup(harness: PipelineHarness) -> None:
         "event_type": "order",
     }
 
-    # First pass: should produce 1 row
-    await harness.publish_to_normalizer(TRADE_NORMALIZATION, event)
-    rows = await harness.wait_for_rows("orders", expected=1)
-    assert len(rows) == 1
+    async with harness.step(
+        "Publish first copy",
+        "Send event to normalizer topic — should produce 1 row in orders",
+    ):
+        await harness.publish_to_normalizer(TRADE_NORMALIZATION, event)
+        rows = await harness.wait_for_rows("orders", expected=1)
+        assert len(rows) == 1
 
-    # Second pass: same message_id -> should still be 1 row
-    await harness.publish_to_normalizer(TRADE_NORMALIZATION, dict(event))
-    await harness.wait_for_no_new_rows("orders", known=1)
+    async with harness.step(
+        "Publish duplicate copy",
+        "Re-send same message_id — should be silently dropped (internal dedup)",
+    ):
+        await harness.publish_to_normalizer(TRADE_NORMALIZATION, dict(event))
+        await harness.wait_for_no_new_rows("orders", known=1)
 
 
 async def scenario_alert_via_method(
@@ -181,30 +224,49 @@ async def scenario_alert_via_method(
 ) -> None:
     """Large-notional order triggers a large_notional alert via the given method."""
     tenant_id = harness.tenant_id
-    # $1.5M notional_usd: quantity=5000 x price=300 x USD rate 1.0
-    big_order = make_order(quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id)
-    await harness.ingest(method, "order", [big_order])
 
-    alerts = await harness.wait_for_alert(
-        lambda r: r.get("algorithm") == "large_notional"
-    )
-    large_notional = [a for a in alerts if a.get("algorithm") == "large_notional"]
-    assert large_notional, f"No large_notional alert via {method}"
-    assert large_notional[0]["severity"] == "high"
+    async with harness.step(
+        "Ingest large order",
+        f"Publish $1.5M order via {method} (5000 x $300 USD)",
+    ):
+        big_order = make_order(
+            quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id,
+        )
+        await harness.ingest(method, "order", [big_order])
+
+    async with harness.step(
+        "Wait for alert",
+        "Wait for large_notional algorithm to fire with severity=high",
+    ):
+        alerts = await harness.wait_for_alert(
+            lambda r: r.get("algorithm") == "large_notional"
+        )
+        large_notional = [a for a in alerts if a.get("algorithm") == "large_notional"]
+        assert large_notional, f"No large_notional alert via {method}"
+        assert large_notional[0]["severity"] == "high"
 
 
 async def scenario_large_notional(harness: PipelineHarness) -> None:
     """LargeNotionalAlgo: fires above $1M notional_usd."""
     tenant_id = harness.tenant_id
-    # Above threshold ($1.5M = 5000 x 300 x 1.0)
-    big = make_order(quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id)
-    await harness.ingest("kafka", "order", [big])
-    alerts = await harness.wait_for_alert(
-        lambda r: r.get("algorithm") == "large_notional"
-    )
-    large_notional = [a for a in alerts if a.get("algorithm") == "large_notional"]
-    assert len(large_notional) >= 1
-    assert large_notional[0]["severity"] == "high"
+
+    async with harness.step(
+        "Ingest large order",
+        "Publish $1.5M order via Kafka (5000 x $300 USD, above $1M threshold)",
+    ):
+        big = make_order(quantity=5_000.0, price=300.0, currency="USD", tenant_id=tenant_id)
+        await harness.ingest("kafka", "order", [big])
+
+    async with harness.step(
+        "Verify large_notional alert",
+        "Wait for LargeNotionalAlgo to fire with severity=high",
+    ):
+        alerts = await harness.wait_for_alert(
+            lambda r: r.get("algorithm") == "large_notional"
+        )
+        large_notional = [a for a in alerts if a.get("algorithm") == "large_notional"]
+        assert len(large_notional) >= 1
+        assert large_notional[0]["severity"] == "high"
 
 
 async def scenario_velocity(harness: PipelineHarness) -> None:
@@ -220,43 +282,53 @@ async def scenario_velocity(harness: PipelineHarness) -> None:
     """
     tenant_id = harness.tenant_id
 
-    # Enable 5-min sliding window for this tenant (default is 0 = per-event)
-    if hasattr(harness, "cache"):
-        harness.cache.set(f"client_config:{tenant_id}", {
-            "mode": "realtime",
-            "window_size_minutes": 5,
-            "window_slide_minutes": 1,
-        })
-    elif hasattr(harness, "call_service"):
-        # E2E: create tenant via client_config API so Redis gets the config
-        await harness.call_service(
-            "client_config", "POST", "/api/v1/clients",
-            json={
-                "tenant_id": tenant_id,
-                "display_name": f"Velocity Test {tenant_id}",
+    async with harness.step(
+        "Configure sliding window",
+        "Set 5-minute sliding window for velocity algo (threshold=100 events)",
+    ):
+        if hasattr(harness, "cache"):
+            harness.cache.set(f"client_config:{tenant_id}", {
                 "mode": "realtime",
                 "window_size_minutes": 5,
                 "window_slide_minutes": 1,
-            },
+            })
+        elif hasattr(harness, "call_service"):
+            await harness.call_service(
+                "client_config", "POST", "/api/v1/clients",
+                json={
+                    "tenant_id": tenant_id,
+                    "display_name": f"Velocity Test {tenant_id}",
+                    "mode": "realtime",
+                    "window_size_minutes": 5,
+                    "window_slide_minutes": 1,
+                },
+            )
+
+    async with harness.step(
+        "Ingest 151 orders",
+        "Publish 151 orders at 2s intervals spanning a 5-min window via REST",
+    ):
+        from datetime import datetime, timedelta
+
+        base = datetime.fromisoformat("2026-01-15T10:00:00+00:00")
+        orders = [
+            make_order(
+                tenant_id=tenant_id,
+                transact_time=(base + timedelta(seconds=i * 2)).isoformat(),
+            )
+            for i in range(151)
+        ]
+        await harness.ingest("rest", "order", orders)
+
+    async with harness.step(
+        "Verify velocity alert",
+        "Wait for VelocityAlgo to fire (150 events in window > 100 threshold)",
+    ):
+        alerts = await harness.wait_for_alert(
+            lambda r: r.get("algorithm") == "velocity"
         )
-
-    from datetime import datetime, timedelta
-
-    base = datetime.fromisoformat("2026-01-15T10:00:00+00:00")
-    orders = [
-        make_order(
-            tenant_id=tenant_id,
-            transact_time=(base + timedelta(seconds=i * 2)).isoformat(),
-        )
-        for i in range(151)
-    ]
-    await harness.ingest("rest", "order", orders)
-
-    alerts = await harness.wait_for_alert(
-        lambda r: r.get("algorithm") == "velocity"
-    )
-    velocity = [a for a in alerts if a.get("algorithm") == "velocity"]
-    assert velocity, "VelocityAlgo should fire after 151 events"
+        velocity = [a for a in alerts if a.get("algorithm") == "velocity"]
+        assert velocity, "VelocityAlgo should fire after 151 events"
 
 
 async def scenario_suspicious_counterparty(harness: PipelineHarness) -> None:
@@ -265,18 +337,27 @@ async def scenario_suspicious_counterparty(harness: PipelineHarness) -> None:
     Requires the harness to be configured with suspicious-counterparty-ids=bad-cp-1.
     """
     tenant_id = harness.tenant_id
-    suspicious_tx = make_transaction(counterparty_id="bad-cp-1", tenant_id=tenant_id)
-    await harness.ingest("rest", "transaction", [suspicious_tx])
 
-    alerts = await harness.wait_for_alert(
-        lambda r: r.get("algorithm") == "suspicious_counterparty"
-    )
-    suspicious = [
-        a for a in alerts if a.get("algorithm") == "suspicious_counterparty"
-    ]
-    assert suspicious, (
-        "SuspiciousCounterpartyAlgo should fire for blocklisted counterparty"
-    )
+    async with harness.step(
+        "Ingest suspicious transaction",
+        "Publish transaction with blocklisted counterparty_id='bad-cp-1'",
+    ):
+        suspicious_tx = make_transaction(counterparty_id="bad-cp-1", tenant_id=tenant_id)
+        await harness.ingest("rest", "transaction", [suspicious_tx])
+
+    async with harness.step(
+        "Verify suspicious_counterparty alert",
+        "Wait for SuspiciousCounterpartyAlgo to fire for blocklisted counterparty",
+    ):
+        alerts = await harness.wait_for_alert(
+            lambda r: r.get("algorithm") == "suspicious_counterparty"
+        )
+        suspicious = [
+            a for a in alerts if a.get("algorithm") == "suspicious_counterparty"
+        ]
+        assert suspicious, (
+            "SuspiciousCounterpartyAlgo should fire for blocklisted counterparty"
+        )
 
 
 async def scenario_multi_error_consolidation(
@@ -290,28 +371,40 @@ async def scenario_multi_error_consolidation(
     and a ``raw_data`` field containing the original event.
     """
     tenant_id = harness.tenant_id
-    events = [make_multi_invalid(event_type, tenant_id=tenant_id) for _ in range(10)]
-    await harness.ingest(method, event_type, events)
-
-    error_rows = await harness.wait_for_rows("normalization_errors", expected=10)
-    assert len(error_rows) == 10, (
-        f"Expected exactly 10 consolidated error rows, got {len(error_rows)}"
-    )
-    for row in error_rows:
-        errors = _ensure_parsed(row.get("errors"))
-        assert isinstance(errors, list), f"errors should be a list, got {type(errors)}"
-        assert len(errors) >= 2, (
-            f"Each error row should have >= 2 errors, got {len(errors)}"
-        )
-        raw_data = _ensure_parsed(row.get("raw_data"))
-        assert raw_data is not None, "raw_data should contain the original event"
-
-    # No valid rows should exist
     table = EVENT_TABLE[event_type]
-    valid_rows = await harness.wait_for_rows(table, expected=0)
-    assert valid_rows == [], (
-        f"Valid table '{table}' must be empty for 100% invalid input"
-    )
+
+    async with harness.step(
+        "Ingest multi-error events",
+        f"Publish 10 {event_type} events via {method}, each with 2+ validation errors",
+    ):
+        events = [make_multi_invalid(event_type, tenant_id=tenant_id) for _ in range(10)]
+        await harness.ingest(method, event_type, events)
+
+    async with harness.step(
+        "Verify error consolidation",
+        "Check exactly 10 error rows (1 per event), each with errors list >= 2 entries",
+    ):
+        error_rows = await harness.wait_for_rows("normalization_errors", expected=10)
+        assert len(error_rows) == 10, (
+            f"Expected exactly 10 consolidated error rows, got {len(error_rows)}"
+        )
+        for row in error_rows:
+            errors = _ensure_parsed(row.get("errors"))
+            assert isinstance(errors, list), f"errors should be a list, got {type(errors)}"
+            assert len(errors) >= 2, (
+                f"Each error row should have >= 2 errors, got {len(errors)}"
+            )
+            raw_data = _ensure_parsed(row.get("raw_data"))
+            assert raw_data is not None, "raw_data should contain the original event"
+
+    async with harness.step(
+        "Verify no valid rows",
+        f"Confirm {table} table is empty (all events had validation errors)",
+    ):
+        valid_rows = await harness.wait_for_rows(table, expected=0)
+        assert valid_rows == [], (
+            f"Valid table '{table}' must be empty for 100% invalid input"
+        )
 
 
 async def scenario_duplicate_contains_original_event(
@@ -325,19 +418,29 @@ async def scenario_duplicate_contains_original_event(
     tenant_id = harness.tenant_id
     fixed_id = f"fixed-{uuid.uuid4().hex[:8]}"
     event = EVENT_FACTORY["order"](id_=fixed_id, tenant_id=tenant_id)
-    await harness.ingest("kafka", "order", [event])
 
-    # First event should land in the valid table
-    rows = await harness.wait_for_rows("orders", expected=1)
-    assert len(rows) == 1
+    async with harness.step(
+        "Ingest original event",
+        "Publish order via Kafka — first copy should land in orders table",
+    ):
+        await harness.ingest("kafka", "order", [event])
+        rows = await harness.wait_for_rows("orders", expected=1)
+        assert len(rows) == 1
 
-    # Ingest the same event again (starter assigns new message_id)
-    await harness.ingest("kafka", "order", [event])
+    async with harness.step(
+        "Ingest duplicate event",
+        "Re-send same order — should be classified as external duplicate",
+    ):
+        await harness.ingest("kafka", "order", [event])
 
-    dup_rows = await harness.wait_for_rows("duplicates", expected=1)
-    assert len(dup_rows) == 1
-    dup = dup_rows[0]
-    assert "original_event" in dup, "duplicate row must have original_event"
-    original = _ensure_parsed(dup["original_event"])
-    assert isinstance(original, dict), "original_event should be a dict"
-    assert original.get("id") == fixed_id
+    async with harness.step(
+        "Verify duplicate record",
+        "Check duplicate row contains original_event with matching id",
+    ):
+        dup_rows = await harness.wait_for_rows("duplicates", expected=1)
+        assert len(dup_rows) == 1
+        dup = dup_rows[0]
+        assert "original_event" in dup, "duplicate row must have original_event"
+        original = _ensure_parsed(dup["original_event"])
+        assert isinstance(original, dict), "original_event should be a dict"
+        assert original.get("id") == fixed_id

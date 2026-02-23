@@ -149,6 +149,13 @@ class StepLogger:
 
             self._steps.append(record)
 
+    def log(self, name: str, description: str = "") -> None:
+        """Record a simple step without snapshots (sync-friendly)."""
+        record = StepRecord(name=name, description=description)
+        record.start_time = time.time()
+        record.end_time = record.start_time
+        self._steps.append(record)
+
     @property
     def steps(self) -> list[StepRecord]:
         return list(self._steps)

@@ -31,7 +31,10 @@
       "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check de_platform/modules/alert_manager/ 2>&1)",
       "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check tests/helpers/step_logger.py tests/helpers/harness.py tests/helpers/pytest_pipeline_report.py tests/unit/test_step_logger.py 2>&1)",
       "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check tests/helpers/step_logger.py tests/unit/test_step_logger.py 2>&1)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(source .venv/bin/activate && python -m ruff check de_platform/ tests/ 2>&1)",
+      "Bash(source .venv/bin/activate && python -m ruff check --fix tests/helpers/scenarios.py 2>&1)",
+      "Bash(source .venv/bin/activate && python -m ruff check tests/helpers/scenarios.py tests/helpers/step_logger.py tests/helpers/pytest_pipeline_report.py tests/e2e/test_auth.py tests/e2e/test_client_config.py tests/e2e/test_data_audit.py tests/e2e/test_task_scheduler.py tests/e2e/test_alert_cases.py tests/e2e_ui/test_login.py tests/e2e_ui/test_alerts.py tests/e2e_ui/test_data_audit.py tests/e2e_ui/test_client_config.py 2>&1)"
     ]
   }
 }

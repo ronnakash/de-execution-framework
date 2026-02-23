@@ -60,56 +60,82 @@ async def _wait_for_audit_counts(
 
 
 async def test_valid_events_counted(harness):
-    events = [make_order(tenant_id=harness.tenant_id) for _ in range(5)]
-    await harness.ingest("rest", "order", events)
+    async with harness.step(
+        "Ingest valid orders",
+        "Publish 5 valid orders via REST and wait for persistence",
+    ):
+        events = [make_order(tenant_id=harness.tenant_id) for _ in range(5)]
+        await harness.ingest("rest", "order", events)
+        await harness.wait_for_rows("orders", 5)
 
-    # Wait for persistence first
-    await harness.wait_for_rows("orders", 5)
-
-    summary = await _wait_for_audit_counts(harness, min_processed=5)
-    assert summary["total_processed"] >= 5
+    async with harness.step(
+        "Verify audit counts",
+        "Poll /audit/summary — expect total_processed >= 5",
+    ):
+        summary = await _wait_for_audit_counts(harness, min_processed=5)
+        assert summary["total_processed"] >= 5
 
 
 async def test_invalid_events_counted_as_errors(harness):
-    events = [make_invalid("order", tenant_id=harness.tenant_id) for _ in range(3)]
-    await harness.ingest("rest", "order", events)
+    async with harness.step(
+        "Ingest invalid orders",
+        "Publish 3 invalid orders via REST and wait for error rows",
+    ):
+        events = [make_invalid("order", tenant_id=harness.tenant_id) for _ in range(3)]
+        await harness.ingest("rest", "order", events)
+        await harness.wait_for_rows("normalization_errors", 3)
 
-    # Wait for error rows in normalization_errors
-    await harness.wait_for_rows("normalization_errors", 3)
-
-    summary = await _wait_for_audit_counts(harness, min_errors=3)
-    assert summary["total_errors"] >= 3
+    async with harness.step(
+        "Verify error counts",
+        "Poll /audit/summary — expect total_errors >= 3",
+    ):
+        summary = await _wait_for_audit_counts(harness, min_errors=3)
+        assert summary["total_errors"] >= 3
 
 
 async def test_daily_audit_endpoint(harness):
-    events = [make_order(tenant_id=harness.tenant_id) for _ in range(3)]
-    await harness.ingest("rest", "order", events)
+    async with harness.step(
+        "Ingest and persist orders",
+        "Publish 3 valid orders via REST, wait for persistence and audit counts",
+    ):
+        events = [make_order(tenant_id=harness.tenant_id) for _ in range(3)]
+        await harness.ingest("rest", "order", events)
+        await harness.wait_for_rows("orders", 3)
+        await _wait_for_audit_counts(harness, min_processed=3)
 
-    await harness.wait_for_rows("orders", 3)
-    await _wait_for_audit_counts(harness, min_processed=3)
-
-    status, body = await harness.call_service(
-        "data_audit", "GET", "/api/v1/audit/daily",
-        params={"tenant_id": harness.tenant_id},
-    )
-    assert status == 200
-    assert isinstance(body, list)
-    assert len(body) > 0
-    record = body[0]
-    assert "date" in record
-    assert "event_type" in record
+    async with harness.step(
+        "Query daily audit",
+        "GET /audit/daily — expect records with date and event_type fields",
+    ):
+        status, body = await harness.call_service(
+            "data_audit", "GET", "/api/v1/audit/daily",
+            params={"tenant_id": harness.tenant_id},
+        )
+        assert status == 200
+        assert isinstance(body, list)
+        assert len(body) > 0
+        record = body[0]
+        assert "date" in record
+        assert "event_type" in record
 
 
 async def test_summary_by_event_type(harness):
-    orders = [make_order(tenant_id=harness.tenant_id) for _ in range(3)]
-    txns = [make_transaction(tenant_id=harness.tenant_id) for _ in range(2)]
-    await harness.ingest("rest", "order", orders)
-    await harness.ingest("rest", "transaction", txns)
+    async with harness.step(
+        "Ingest mixed event types",
+        "Publish 3 orders + 2 transactions via REST, wait for persistence",
+    ):
+        orders = [make_order(tenant_id=harness.tenant_id) for _ in range(3)]
+        txns = [make_transaction(tenant_id=harness.tenant_id) for _ in range(2)]
+        await harness.ingest("rest", "order", orders)
+        await harness.ingest("rest", "transaction", txns)
+        await harness.wait_for_rows("orders", 3)
+        await harness.wait_for_rows("transactions", 2)
 
-    await harness.wait_for_rows("orders", 3)
-    await harness.wait_for_rows("transactions", 2)
-    summary = await _wait_for_audit_counts(harness, min_processed=5)
-
-    by_type = summary.get("by_event_type", {})
-    assert "order" in by_type or "trade" in by_type
-    assert "transaction" in by_type
+    async with harness.step(
+        "Verify summary by event type",
+        "Poll /audit/summary — expect breakdown by_event_type for orders and transactions",
+    ):
+        summary = await _wait_for_audit_counts(harness, min_processed=5)
+        by_type = summary.get("by_event_type", {})
+        assert "order" in by_type or "trade" in by_type
+        assert "transaction" in by_type
