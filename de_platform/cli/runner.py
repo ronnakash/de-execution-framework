@@ -278,10 +278,20 @@ def _build_container(
         lifecycle.set_health_server(health_server)
         container.register_instance(HealthCheckServer, health_server)
 
-    # 6. Register DatabaseFactory from --db entries
+    # 6. Ensure MetricsInterface is always available (NoopMetrics as default)
+    #    Registered early so DatabaseFactory can use it for auto-wrapping.
+    from de_platform.services.metrics.interface import MetricsInterface
+
+    if not container.has(MetricsInterface):
+        from de_platform.services.metrics.noop_metrics import NoopMetrics
+
+        container.register_instance(MetricsInterface, NoopMetrics())
+
+    # 7. Register DatabaseFactory from --db entries
     if db_entries:
         db_configs = _parse_db_entries(db_entries, secrets)
-        factory = DatabaseFactory(db_configs)
+        metrics = container._registry[MetricsInterface]
+        factory = DatabaseFactory(db_configs, metrics=metrics)
         container.register_instance(DatabaseFactory, factory)
 
         # Also register DatabaseInterface as a singleton so modules that
@@ -304,7 +314,7 @@ def _build_container(
                 if hasattr(db_instance, "health_check"):
                     hs.register_check("db", db_instance.health_check)
 
-    # 7. Register each requested interface implementation (non-db)
+    # 8. Register each requested interface implementation (non-db)
     for flag_name, impl_name in impl_flags.items():
         if flag_name == "log":
             continue  # handled above via LoggerFactory
@@ -334,14 +344,6 @@ def _build_container(
             hs = container._registry[HealthCheckServer]
             if hasattr(instance, "health_check"):
                 hs.register_check(flag_name, instance.health_check)
-
-    # 8. Ensure MetricsInterface is always available (NoopMetrics as default)
-    from de_platform.services.metrics.interface import MetricsInterface
-
-    if not container.has(MetricsInterface):
-        from de_platform.services.metrics.noop_metrics import NoopMetrics
-
-        container.register_instance(MetricsInterface, NoopMetrics())
 
     # 9. Wrap DatabaseInterface with observability (timing histograms by caller)
     from de_platform.services.database.interface import DatabaseInterface as _DBI

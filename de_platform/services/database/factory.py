@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from de_platform.services.database.interface import DatabaseInterface
+from de_platform.services.metrics.interface import MetricsInterface
 from de_platform.services.secrets.interface import SecretsInterface
 
 
@@ -26,9 +27,12 @@ class DbConfig:
 class DatabaseFactory:
     """Registry of named database instances with lazy instantiation."""
 
-    def __init__(self, configs: dict[str, DbConfig]) -> None:
+    def __init__(
+        self, configs: dict[str, DbConfig], metrics: MetricsInterface | None = None
+    ) -> None:
         self._configs = configs
         self._instances: dict[str, DatabaseInterface] = {}
+        self._metrics = metrics
 
     def register_instance(self, name: str, instance: DatabaseInterface) -> None:
         """Register a pre-built DB instance (useful for testing)."""
@@ -42,6 +46,10 @@ class DatabaseFactory:
             available = ", ".join(self._configs.keys())
             raise KeyError(f"No database configured with name '{name}' (available: {available})")
         instance = config.create()
+        if self._metrics is not None:
+            from de_platform.services.database.observable_database import ObservableDatabase
+
+            instance = ObservableDatabase(instance, self._metrics, db_prefix=name)
         self._instances[name] = instance
         return instance
 
