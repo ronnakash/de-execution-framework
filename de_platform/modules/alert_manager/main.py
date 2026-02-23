@@ -311,11 +311,9 @@ class AlertManagerModule(Module):
     def _resolve_tenant_id(self, request: web.Request) -> str | None:
         jwt_tenant = request.get("tenant_id")
         query_tenant = request.rel_url.query.get("tenant_id")
-        if jwt_tenant:
-            if request.get("role") == "admin" and query_tenant:
-                return query_tenant
-            return jwt_tenant
-        return query_tenant
+        if jwt_tenant and request.get("role") == "admin":
+            return query_tenant  # None means "all tenants"
+        return query_tenant or jwt_tenant
 
     async def _list_alerts(self, request: web.Request) -> web.Response:
         self.metrics.counter("http_requests_total", tags={

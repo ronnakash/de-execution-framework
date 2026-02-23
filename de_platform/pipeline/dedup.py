@@ -12,7 +12,7 @@ from __future__ import annotations
 from de_platform.services.cache.interface import CacheInterface
 
 _DEDUP_PREFIX = "dedup:"
-_DEDUP_TTL = 86400  # 24 hours
+_DEDUP_TTL = 7200  # 2 hours
 _MAX_IDS = 10
 
 

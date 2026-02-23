@@ -15,7 +15,7 @@ from __future__ import annotations
 from de_platform.services.cache.interface import CacheInterface
 from de_platform.services.database.interface import DatabaseInterface
 
-_CACHE_TTL = 3600  # seconds — refresh rates every hour
+_CACHE_TTL = 7200  # seconds — refresh rates every 2 hours
 _CACHE_PREFIX = "currency_rate:"
 
 

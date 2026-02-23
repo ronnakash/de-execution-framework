@@ -370,7 +370,7 @@ class ClientConfigModule(Module):
             "window_size_minutes": row.get("window_size_minutes", 0),
             "window_slide_minutes": row.get("window_slide_minutes", 0),
             "case_aggregation_minutes": row.get("case_aggregation_minutes", 60),
-        })
+        }, ttl=7200)
         self.cache.publish_channel(CHANNEL, tenant_id)
 
     def _sync_algo_to_cache(self, tenant_id: str, algo: str, row: dict) -> None:
@@ -381,7 +381,7 @@ class ClientConfigModule(Module):
         self.cache.set(f"algo_config:{tenant_id}:{algo}", {
             "enabled": row.get("enabled", True),
             "thresholds": thresholds,
-        })
+        }, ttl=7200)
         self.cache.publish_channel(CHANNEL, tenant_id)
 
     async def _stop_server(self) -> None:

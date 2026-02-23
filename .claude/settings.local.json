@@ -14,7 +14,8 @@
       "Bash(.venv/bin/python:*)",
       "Bash(ls:*)",
       "Bash(test:*)",
-      "Bash(make lint:*)"
+      "Bash(make lint:*)",
+      "Bash(make test:*)"
     ]
   }
 }

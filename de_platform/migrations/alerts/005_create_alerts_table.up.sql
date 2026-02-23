@@ -12,4 +12,4 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alerts_tenant ON alerts(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity)
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);

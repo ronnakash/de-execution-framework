@@ -24,6 +24,7 @@ import json
 import pathlib
 from datetime import date, datetime
 
+import aiohttp as aiohttp_client
 from aiohttp import web
 
 
@@ -77,9 +78,27 @@ class DataApiModule(Module):
         self.port = self.config.get("port", 8002)
         self.events_db: DatabaseInterface = self.db_factory.get("events")
         await self.events_db.connect_async()
+
+        # Proxy target URLs for production static UI
+        self._proxy_targets = {
+            "alerts": self.secrets.get("ALERT_MANAGER_URL") or "http://localhost:8007",
+            "cases": self.secrets.get("ALERT_MANAGER_URL") or "http://localhost:8007",
+            "clients": self.secrets.get("CLIENT_CONFIG_URL") or "http://localhost:8003",
+            "audit": self.secrets.get("DATA_AUDIT_URL") or "http://localhost:8005",
+            "tasks": self.secrets.get("TASK_SCHEDULER_URL") or "http://localhost:8006",
+            "runs": self.secrets.get("TASK_SCHEDULER_URL") or "http://localhost:8006",
+            "auth": self.secrets.get("AUTH_URL") or "http://localhost:8004",
+        }
+        self._proxy_session = aiohttp_client.ClientSession()
+
         self.lifecycle.on_shutdown(self._stop_server)
+        self.lifecycle.on_shutdown(self._close_proxy_session)
         self.lifecycle.on_shutdown(self.events_db.disconnect_async)
         self.log.info("Data API initialized", port=self.port)
+
+    async def _close_proxy_session(self) -> None:
+        if self._proxy_session:
+            await self._proxy_session.close()
 
     async def execute(self) -> int:
         app = self._create_app()
@@ -102,13 +121,62 @@ class DataApiModule(Module):
 
             middlewares.append(create_auth_middleware(jwt_secret))
         app = web.Application(middlewares=middlewares)
+
+        # Event endpoints (native)
         app.router.add_get("/api/v1/events/orders", self._get_orders)
         app.router.add_get("/api/v1/events/executions", self._get_executions)
         app.router.add_get("/api/v1/events/transactions", self._get_transactions)
+
+        # Proxy routes to backend services (must be before static catch-all)
+        for prefix, service_key in [
+            ("/api/v1/alerts", "alerts"),
+            ("/api/v1/cases", "cases"),
+            ("/api/v1/clients", "clients"),
+            ("/api/v1/audit", "audit"),
+            ("/api/v1/tasks", "tasks"),
+            ("/api/v1/runs", "runs"),
+            ("/api/v1/auth", "auth"),
+        ]:
+            target = self._proxy_targets[service_key]
+            app.router.add_route(
+                "*", prefix + "/{path_info:.*}",
+                lambda req, t=target: self._proxy_handler(req, t),
+            )
+            app.router.add_route(
+                "*", prefix,
+                lambda req, t=target: self._proxy_handler(req, t),
+            )
+
         # Serve static UI if the directory is present
         if _STATIC_DIR.exists():
             app.router.add_static("/ui", _STATIC_DIR)
         return app
+
+    async def _proxy_handler(self, request: web.Request, target_base: str) -> web.Response:
+        """Forward request to upstream service and return its response."""
+        target_url = f"{target_base}{request.path}"
+        if request.query_string:
+            target_url += f"?{request.query_string}"
+
+        headers = {
+            k: v for k, v in request.headers.items()
+            if k.lower() not in ("host", "transfer-encoding")
+        }
+
+        body = await request.read()
+
+        async with self._proxy_session.request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            data=body if body else None,
+        ) as resp:
+            resp_body = await resp.read()
+            return web.Response(
+                status=resp.status,
+                body=resp_body,
+                content_type=resp.content_type,
+            )
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -116,12 +184,9 @@ class DataApiModule(Module):
         """Get tenant_id from JWT (if auth active) with admin override via query param."""
         jwt_tenant = request.get("tenant_id")
         query_tenant = request.rel_url.query.get("tenant_id")
-        if jwt_tenant:
-            # Admin users can query other tenants via ?tenant_id=
-            if request.get("role") == "admin" and query_tenant:
-                return query_tenant
-            return jwt_tenant
-        return query_tenant
+        if jwt_tenant and request.get("role") == "admin":
+            return query_tenant  # None means "all tenants"
+        return query_tenant or jwt_tenant
 
     # ── Event endpoints ───────────────────────────────────────────────────────
 
