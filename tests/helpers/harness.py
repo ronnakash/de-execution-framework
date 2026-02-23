@@ -118,6 +118,17 @@ class PipelineHarness(Protocol):
 
     async def publish_to_normalizer(self, topic: str, msg: dict) -> None: ...
 
+    async def call_service(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, Any]: ...
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MemoryHarness — in-memory stubs, manual step-by-step
@@ -353,6 +364,18 @@ class MemoryHarness:
     async def publish_to_normalizer(self, topic: str, msg: dict) -> None:
         await self._ensure_modules()
         self.mq.publish(topic, msg)
+
+    async def call_service(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, Any]:
+        raise NotImplementedError("call_service is not supported in MemoryHarness")
 
     async def consume_alert_topic(self) -> dict | None:
         return self.mq.consume_one(ALERTS)
@@ -590,7 +613,8 @@ class SharedPipeline:
             ("auth", ["--db", "auth=postgres"],
              ["--port", str(self.auth_port)]),
             ("data_audit", ["--db", "data_audit=postgres", "--mq", "kafka"],
-             ["--port", str(self.data_audit_port)]),
+             ["--port", str(self.data_audit_port),
+              "--flush-threshold", "1", "--flush-interval", "1"]),
             ("task_scheduler", ["--db", "task_scheduler=postgres"],
              ["--port", str(self.task_scheduler_port)]),
         ]
@@ -769,6 +793,15 @@ class RealInfraHarness:
     Shares the pipeline's sync ClickHouse and Kafka connections.
     """
 
+    _SERVICE_PORT_ATTRS = {
+        "data_api": "api_port",
+        "client_config": "config_port",
+        "auth": "auth_port",
+        "alert_manager": "alert_manager_port",
+        "data_audit": "data_audit_port",
+        "task_scheduler": "task_scheduler_port",
+    }
+
     def __init__(self, pipeline: SharedPipeline) -> None:
         self._pipeline = pipeline
         self.tenant_id: str = f"INTEGRATION_CLIENT_{uuid.uuid4().hex[:12]}"
@@ -891,6 +924,28 @@ class RealInfraHarness:
         async with aiohttp.ClientSession() as session:
             resp = await session.get(url)
             body = await resp.json()
+            return resp.status, body
+
+    async def call_service(
+        self,
+        service: str,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, Any]:
+        port = getattr(self._pipeline, self._SERVICE_PORT_ATTRS[service])
+        url = f"http://127.0.0.1:{port}{path}"
+        async with aiohttp.ClientSession() as session:
+            resp = await session.request(
+                method, url, json=json, params=params, headers=headers,
+            )
+            try:
+                body = await resp.json()
+            except Exception:
+                body = await resp.text()
             return resp.status, body
 
     async def publish_to_normalizer(self, topic: str, msg: dict) -> None:

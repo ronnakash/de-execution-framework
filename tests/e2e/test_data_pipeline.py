@@ -1,10 +1,10 @@
-"""E2E tests: full pipeline via shared subprocesses.
+"""E2E tests: data flow through the full pipeline.
 
-All tests run against a single shared pipeline of 6 module subprocesses
-(the most production-realistic mode) with real Postgres, ClickHouse,
-Redis, Kafka, and MinIO (via docker-compose).
+Tests valid, invalid, duplicate, and error consolidation scenarios
+across all ingestion methods (rest, kafka, files) and event types
+(order, execution, transaction).
 
-34 tests: 27 matrix (3 methods x 3 event types x 3 scenarios) + 7 general.
+29 tests: 9 valid + 9 invalid + 9 duplicate + 1 internal_dedup + 1 duplicate_contains_original.
 
 Requires: ``pytest -m e2e`` or ``make test-e2e``.
 """
@@ -13,21 +13,15 @@ from __future__ import annotations
 
 import pytest
 
+from tests.helpers import scenarios
 from tests.helpers.events import FULL_MATRIX
 from tests.helpers.harness import RealInfraHarness
-from tests.helpers import scenarios
 
 pytestmark = [pytest.mark.e2e]
 
 
 @pytest.fixture
 async def harness(shared_pipeline):
-    async with RealInfraHarness(shared_pipeline) as h:
-        yield h
-
-
-@pytest.fixture
-async def harness_suspicious_cp(shared_pipeline):
     async with RealInfraHarness(shared_pipeline) as h:
         yield h
 
@@ -50,31 +44,11 @@ async def test_duplicate_events(harness, method, event_type):
     await scenarios.scenario_duplicate_events(harness, method, event_type)
 
 
-# ── General scenarios (7 tests) ──────────────────────────────────────────────
+# ── General scenarios ─────────────────────────────────────────────────────────
 
 
 async def test_internal_dedup(harness):
     await scenarios.scenario_internal_dedup(harness)
-
-
-@pytest.mark.parametrize("method", ["rest", "kafka", "files"])
-async def test_alert_generation(harness, method):
-    await scenarios.scenario_alert_via_method(harness, method)
-
-
-async def test_large_notional_algorithm(harness):
-    await scenarios.scenario_large_notional(harness)
-
-
-async def test_velocity_algorithm(harness):
-    await scenarios.scenario_velocity(harness)
-
-
-async def test_suspicious_counterparty_algorithm(harness_suspicious_cp):
-    await scenarios.scenario_suspicious_counterparty(harness_suspicious_cp)
-
-
-# ── Bug fix scenarios ────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("method,event_type", FULL_MATRIX)
