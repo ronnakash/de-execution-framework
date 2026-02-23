@@ -1,13 +1,13 @@
 .PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-stop infra-up infra-down setup setup-full
 
-PYTHON ?= .venv/bin/python
+PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
 
 test:
-	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e"
+	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e" -n auto
 
 test-unit:
-	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e"
+	$(PYTEST) de_platform/ tests/unit/ -v -m "not integration and not e2e" -n auto
 
 test-integration:
 	$(PYTEST) tests/integration/ -v -m integration --tb=short
@@ -19,7 +19,7 @@ test-e2e-ui:
 	$(PYTEST) tests/e2e_ui/ -v -m e2e_ui --tb=short
 
 test-all:
-	$(PYTEST) -v --tb=short
+	$(PYTEST) -v --tb=short -n auto
 
 lint:
 	$(PYTHON) -m ruff check de_platform/

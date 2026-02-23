@@ -263,6 +263,8 @@ class DataAuditModule(Module):
         app.router.add_get("/api/v1/audit/summary", self._get_summary)
         app.router.add_get("/api/v1/audit/files", self._list_files)
         app.router.add_get("/api/v1/audit/files/{file_id}", self._get_file)
+        app.router.add_post("/api/v1/query/audit/daily", self._query_daily)
+        app.router.add_post("/api/v1/query/audit/files", self._query_files)
         return app
 
     async def _get_daily(self, request: web.Request) -> web.Response:
@@ -347,6 +349,22 @@ class DataAuditModule(Module):
             text=json.dumps({"error": "file not found"}),
             content_type="application/json",
         )
+
+    # ── Query endpoints ────────────────────────────────────────────────
+
+    async def _query_daily(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        rows = await self.db.fetch_all_async("SELECT * FROM daily_audit")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
+
+    async def _query_files(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        rows = await self.db.fetch_all_async("SELECT * FROM file_audit")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryApi } from "../api/client";
 import {
-  fetchDailyAudit,
   fetchAuditSummary,
   type DailyAudit,
 } from "../api/audit";
@@ -11,14 +11,24 @@ export default function DataAuditPage() {
   const [tenantId, setTenantId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  useEffect(() => setPage(1), [tenantId, startDate, endDate]);
 
   const dailyQuery = useQuery({
-    queryKey: ["audit-daily", tenantId, startDate, endDate],
+    queryKey: ["audit-daily", tenantId, sortBy, sortOrder, page, pageSize],
     queryFn: () =>
-      fetchDailyAudit({
-        tenant_id: tenantId || undefined,
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
+      queryApi<DailyAudit>("audit/daily", {
+        filters: {
+          ...(tenantId ? { tenant_id: tenantId } : {}),
+        },
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        page,
+        page_size: pageSize,
       }),
   });
 
@@ -27,13 +37,24 @@ export default function DataAuditPage() {
     queryFn: () => fetchAuditSummary(tenantId || undefined),
   });
 
+  const handleSortChange = (column: string) => {
+    if (sortBy === column) {
+      setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortBy(column);
+      setSortOrder("desc");
+    }
+    setPage(1);
+  };
+
   const columns = [
-    { key: "date", header: "Date" },
-    { key: "tenant_id", header: "Tenant" },
-    { key: "event_type", header: "Event Type" },
+    { key: "date", header: "Date", sortable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "event_type", header: "Event Type", sortable: true },
     {
       key: "received_count",
       header: "Received",
+      sortable: true,
       render: (row: DailyAudit) => (
         <span className="font-mono">
           {row.received_count.toLocaleString()}
@@ -43,6 +64,7 @@ export default function DataAuditPage() {
     {
       key: "processed_count",
       header: "Processed",
+      sortable: true,
       render: (row: DailyAudit) => (
         <span className="font-mono">
           {row.processed_count.toLocaleString()}
@@ -52,6 +74,7 @@ export default function DataAuditPage() {
     {
       key: "error_count",
       header: "Errors",
+      sortable: true,
       render: (row: DailyAudit) => (
         <span
           className={`font-mono ${row.error_count > 0 ? "text-red-600 font-medium" : ""}`}
@@ -63,6 +86,7 @@ export default function DataAuditPage() {
     {
       key: "duplicate_count",
       header: "Duplicates",
+      sortable: true,
       render: (row: DailyAudit) => (
         <span className="font-mono">
           {row.duplicate_count.toLocaleString()}
@@ -137,8 +161,17 @@ export default function DataAuditPage() {
       ) : (
         <DataTable
           columns={columns}
-          data={dailyQuery.data || []}
+          data={dailyQuery.data?.data || []}
           emptyMessage="No audit data found."
+          total={dailyQuery.data?.total}
+          page={dailyQuery.data?.page}
+          pageSize={dailyQuery.data?.page_size}
+          totalPages={dailyQuery.data?.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+          onSortChange={handleSortChange}
         />
       )}
     </div>

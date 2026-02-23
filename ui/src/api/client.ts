@@ -62,3 +62,35 @@ export async function fetchApi<T>(
 
   return res.json();
 }
+
+export interface QueryParams {
+  filters?: Record<string, string>;
+  sort_by?: string | null;
+  sort_order?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+export interface QueryResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export function queryApi<T>(
+  resource: string,
+  params: QueryParams = {},
+): Promise<QueryResponse<T>> {
+  return fetchApi<QueryResponse<T>>(`/api/v1/query/${resource}`, {
+    method: "POST",
+    body: JSON.stringify({
+      filters: params.filters || {},
+      sort_by: params.sort_by || null,
+      sort_order: params.sort_order || "desc",
+      page: params.page || 1,
+      page_size: params.page_size || 50,
+    }),
+  });
+}

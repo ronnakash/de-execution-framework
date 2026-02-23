@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryApi } from "../api/client";
 import {
-  fetchAlerts,
-  fetchCases,
   updateCaseStatus,
   type Alert,
   type Case,
@@ -33,19 +32,48 @@ export default function AlertsPage() {
   const [tab, setTab] = useState<"alerts" | "cases">("alerts");
   const queryClient = useQueryClient();
 
+  // Alert sort/pagination state
+  const [alertSortBy, setAlertSortBy] = useState<string | null>(null);
+  const [alertSortOrder, setAlertSortOrder] = useState<"asc" | "desc">("desc");
+  const [alertPage, setAlertPage] = useState(1);
+  const [alertPageSize, setAlertPageSize] = useState(50);
+
+  // Case sort/pagination state
+  const [caseSortBy, setCaseSortBy] = useState<string | null>(null);
+  const [caseSortOrder, setCaseSortOrder] = useState<"asc" | "desc">("desc");
+  const [casePage, setCasePage] = useState(1);
+  const [casePageSize, setCasePageSize] = useState(50);
+
+  useEffect(() => setAlertPage(1), [tenantId, severity]);
+  useEffect(() => setCasePage(1), [tenantId]);
+
   const alertsQuery = useQuery({
-    queryKey: ["alerts", tenantId, severity],
+    queryKey: ["alerts", tenantId, severity, alertSortBy, alertSortOrder, alertPage, alertPageSize],
     queryFn: () =>
-      fetchAlerts({
-        tenant_id: tenantId || undefined,
-        severity: severity || undefined,
-        limit: 100,
+      queryApi<Alert>("alerts", {
+        filters: {
+          ...(tenantId ? { tenant_id: tenantId } : {}),
+          ...(severity ? { severity } : {}),
+        },
+        sort_by: alertSortBy,
+        sort_order: alertSortOrder,
+        page: alertPage,
+        page_size: alertPageSize,
       }),
   });
 
   const casesQuery = useQuery({
-    queryKey: ["cases", tenantId],
-    queryFn: () => fetchCases(tenantId || undefined),
+    queryKey: ["cases", tenantId, caseSortBy, caseSortOrder, casePage, casePageSize],
+    queryFn: () =>
+      queryApi<Case>("cases", {
+        filters: {
+          ...(tenantId ? { tenant_id: tenantId } : {}),
+        },
+        sort_by: caseSortBy,
+        sort_order: caseSortOrder,
+        page: casePage,
+        page_size: casePageSize,
+      }),
     enabled: tab === "cases",
   });
 
@@ -55,26 +83,47 @@ export default function AlertsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
   });
 
+  const handleAlertSortChange = (column: string) => {
+    if (alertSortBy === column) {
+      setAlertSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setAlertSortBy(column);
+      setAlertSortOrder("desc");
+    }
+    setAlertPage(1);
+  };
+
+  const handleCaseSortChange = (column: string) => {
+    if (caseSortBy === column) {
+      setCaseSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setCaseSortBy(column);
+      setCaseSortOrder("desc");
+    }
+    setCasePage(1);
+  };
+
   const alertColumns = [
     {
       key: "severity",
       header: "Severity",
+      sortable: true,
       render: (row: Alert) => <SeverityBadge severity={row.severity} />,
     },
-    { key: "tenant_id", header: "Tenant" },
-    { key: "algorithm", header: "Algorithm" },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "algorithm", header: "Algorithm", sortable: true },
     { key: "event_type", header: "Event Type" },
     { key: "event_id", header: "Event ID" },
     { key: "description", header: "Description" },
-    { key: "created_at", header: "Created" },
+    { key: "created_at", header: "Created", sortable: true },
   ];
 
   const caseColumns = [
-    { key: "case_id", header: "Case ID" },
-    { key: "tenant_id", header: "Tenant" },
-    { key: "status", header: "Status" },
-    { key: "alert_count", header: "Alerts" },
-    { key: "created_at", header: "Created" },
+    { key: "case_id", header: "Case ID", sortable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "status", header: "Status", sortable: true },
+    { key: "alert_count", header: "Alerts", sortable: true },
+    { key: "created_at", header: "Created", sortable: true },
     {
       key: "actions",
       header: "",
@@ -165,8 +214,17 @@ export default function AlertsPage() {
         ) : (
           <DataTable
             columns={alertColumns}
-            data={alertsQuery.data || []}
+            data={alertsQuery.data?.data || []}
             emptyMessage="No alerts found."
+            total={alertsQuery.data?.total}
+            page={alertsQuery.data?.page}
+            pageSize={alertsQuery.data?.page_size}
+            totalPages={alertsQuery.data?.total_pages}
+            onPageChange={setAlertPage}
+            onPageSizeChange={(size) => { setAlertPageSize(size); setAlertPage(1); }}
+            sortBy={alertSortBy}
+            sortOrder={alertSortOrder}
+            onSortChange={handleAlertSortChange}
           />
         )
       ) : casesQuery.isLoading ? (
@@ -174,8 +232,17 @@ export default function AlertsPage() {
       ) : (
         <DataTable
           columns={caseColumns}
-          data={casesQuery.data || []}
+          data={casesQuery.data?.data || []}
           emptyMessage="No cases found."
+          total={casesQuery.data?.total}
+          page={casesQuery.data?.page}
+          pageSize={casesQuery.data?.page_size}
+          totalPages={casesQuery.data?.total_pages}
+          onPageChange={setCasePage}
+          onPageSizeChange={(size) => { setCasePageSize(size); setCasePage(1); }}
+          sortBy={caseSortBy}
+          sortOrder={caseSortOrder}
+          onSortChange={handleCaseSortChange}
         />
       )}
     </div>

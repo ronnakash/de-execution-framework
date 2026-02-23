@@ -311,6 +311,8 @@ class TaskSchedulerModule(Module):
         app.router.add_post("/api/v1/tasks/{task_id}/run", self._trigger_run)
         app.router.add_get("/api/v1/tasks/{task_id}/runs", self._list_runs)
         app.router.add_get("/api/v1/runs/{run_id}", self._get_run)
+        app.router.add_post("/api/v1/query/tasks", self._query_tasks)
+        app.router.add_post("/api/v1/query/runs", self._query_runs)
         return app
 
     async def _list_tasks(self, request: web.Request) -> web.Response:
@@ -501,6 +503,26 @@ class TaskSchedulerModule(Module):
             text=json.dumps({"error": "run not found"}),
             content_type="application/json",
         )
+
+    # ── Query endpoints ────────────────────────────────────────────────
+
+    async def _query_tasks(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        rows = await self.db.fetch_all_async("SELECT * FROM task_definitions")
+        for row in rows:
+            row["default_args"] = _parse_json_field(row.get("default_args", {}))
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
+
+    async def _query_runs(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        rows = await self.db.fetch_all_async("SELECT * FROM task_runs")
+        for row in rows:
+            row["args"] = _parse_json_field(row.get("args", {}))
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

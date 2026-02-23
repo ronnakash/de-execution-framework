@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryApi } from "../api/client";
 import {
-  fetchTasks,
-  fetchRuns,
   createTask,
   deleteTask,
   triggerRun,
@@ -22,14 +21,41 @@ export default function TasksPage() {
   const [showCreate, setShowCreate] = useState(false);
   const queryClient = useQueryClient();
 
+  // Task sort/pagination state
+  const [taskSortBy, setTaskSortBy] = useState<string | null>(null);
+  const [taskSortOrder, setTaskSortOrder] = useState<"asc" | "desc">("desc");
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPageSize, setTaskPageSize] = useState(50);
+
+  // Run sort/pagination state
+  const [runSortBy, setRunSortBy] = useState<string | null>(null);
+  const [runSortOrder, setRunSortOrder] = useState<"asc" | "desc">("desc");
+  const [runPage, setRunPage] = useState(1);
+  const [runPageSize, setRunPageSize] = useState(50);
+
+  useEffect(() => setRunPage(1), [selectedTask]);
+
   const tasksQuery = useQuery({
-    queryKey: ["tasks"],
-    queryFn: fetchTasks,
+    queryKey: ["tasks", taskSortBy, taskSortOrder, taskPage, taskPageSize],
+    queryFn: () =>
+      queryApi<TaskDefinition>("tasks", {
+        sort_by: taskSortBy,
+        sort_order: taskSortOrder,
+        page: taskPage,
+        page_size: taskPageSize,
+      }),
   });
 
   const runsQuery = useQuery({
-    queryKey: ["runs", selectedTask],
-    queryFn: () => fetchRuns(selectedTask!),
+    queryKey: ["runs", selectedTask, runSortBy, runSortOrder, runPage, runPageSize],
+    queryFn: () =>
+      queryApi<TaskRun>("runs", {
+        filters: { task_id: selectedTask! },
+        sort_by: runSortBy,
+        sort_order: runSortOrder,
+        page: runPage,
+        page_size: runPageSize,
+      }),
     enabled: !!selectedTask,
   });
 
@@ -51,13 +77,34 @@ export default function TasksPage() {
     },
   });
 
+  const handleTaskSortChange = (column: string) => {
+    if (taskSortBy === column) {
+      setTaskSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setTaskSortBy(column);
+      setTaskSortOrder("desc");
+    }
+    setTaskPage(1);
+  };
+
+  const handleRunSortChange = (column: string) => {
+    if (runSortBy === column) {
+      setRunSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setRunSortBy(column);
+      setRunSortOrder("desc");
+    }
+    setRunPage(1);
+  };
+
   const taskColumns = [
-    { key: "task_id", header: "Task ID" },
-    { key: "name", header: "Name" },
-    { key: "module_name", header: "Module" },
+    { key: "task_id", header: "Task ID", sortable: true },
+    { key: "name", header: "Name", sortable: true },
+    { key: "module_name", header: "Module", sortable: true },
     {
       key: "schedule_cron",
       header: "Schedule",
+      sortable: true,
       render: (row: TaskDefinition) => (
         <span className={row.schedule_cron ? "" : "text-gray-400"}>
           {row.schedule_cron || "Manual"}
@@ -67,6 +114,7 @@ export default function TasksPage() {
     {
       key: "enabled",
       header: "Enabled",
+      sortable: true,
       render: (row: TaskDefinition) => (
         <span className={row.enabled ? "text-green-600" : "text-gray-400"}>
           {row.enabled ? "Yes" : "No"}
@@ -103,10 +151,11 @@ export default function TasksPage() {
   ];
 
   const runColumns = [
-    { key: "run_id", header: "Run ID" },
+    { key: "run_id", header: "Run ID", sortable: true },
     {
       key: "status",
       header: "Status",
+      sortable: true,
       render: (row: TaskRun) => (
         <span
           className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -117,12 +166,13 @@ export default function TasksPage() {
         </span>
       ),
     },
-    { key: "exit_code", header: "Exit Code" },
-    { key: "started_at", header: "Started" },
-    { key: "completed_at", header: "Completed" },
+    { key: "exit_code", header: "Exit Code", sortable: true },
+    { key: "started_at", header: "Started", sortable: true },
+    { key: "completed_at", header: "Completed", sortable: true },
     {
       key: "error_message",
       header: "Error",
+      sortable: true,
       render: (row: TaskRun) =>
         row.error_message ? (
           <span className="text-red-600 text-xs">{row.error_message}</span>
@@ -156,8 +206,17 @@ export default function TasksPage() {
       ) : (
         <DataTable
           columns={taskColumns}
-          data={tasksQuery.data || []}
+          data={tasksQuery.data?.data || []}
           emptyMessage="No tasks defined."
+          total={tasksQuery.data?.total}
+          page={tasksQuery.data?.page}
+          pageSize={tasksQuery.data?.page_size}
+          totalPages={tasksQuery.data?.total_pages}
+          onPageChange={setTaskPage}
+          onPageSizeChange={(size) => { setTaskPageSize(size); setTaskPage(1); }}
+          sortBy={taskSortBy}
+          sortOrder={taskSortOrder}
+          onSortChange={handleTaskSortChange}
         />
       )}
 
@@ -179,8 +238,17 @@ export default function TasksPage() {
           ) : (
             <DataTable
               columns={runColumns}
-              data={runsQuery.data || []}
+              data={runsQuery.data?.data || []}
               emptyMessage="No runs yet."
+              total={runsQuery.data?.total}
+              page={runsQuery.data?.page}
+              pageSize={runsQuery.data?.page_size}
+              totalPages={runsQuery.data?.total_pages}
+              onPageChange={setRunPage}
+              onPageSizeChange={(size) => { setRunPageSize(size); setRunPage(1); }}
+              sortBy={runSortBy}
+              sortOrder={runSortOrder}
+              onSortChange={handleRunSortChange}
             />
           )}
         </div>

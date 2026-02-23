@@ -126,6 +126,7 @@ class DataApiModule(Module):
         app.router.add_get("/api/v1/events/orders", self._get_orders)
         app.router.add_get("/api/v1/events/executions", self._get_executions)
         app.router.add_get("/api/v1/events/transactions", self._get_transactions)
+        app.router.add_post("/api/v1/query/events/{table}", self._query_events)
 
         # Proxy routes to backend services (must be before static catch-all)
         for prefix, service_key in [
@@ -221,6 +222,29 @@ class DataApiModule(Module):
             result_count=len(result),
         )
         return web.json_response(dumps=_dumps, data=result)
+
+    # ── Query endpoint ─────────────────────────────────────────────────────
+
+    async def _query_events(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        table = request.match_info["table"]
+        if table not in ("orders", "executions", "transactions"):
+            raise web.HTTPBadRequest(
+                text=json.dumps({"error": f"Invalid table: {table}"}),
+                content_type="application/json",
+            )
+        self.metrics.counter("http_requests_total", tags={
+            "service": "data_api",
+            "endpoint": f"/api/v1/query/events/{table}",
+            "method": "POST",
+        })
+        body = await request.json()
+        tenant_id = self._resolve_tenant_id(request)
+        if tenant_id:
+            body.setdefault("filters", {})["tenant_id"] = tenant_id
+        rows = await self.events_db.fetch_all_async(f"SELECT * FROM {table}")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

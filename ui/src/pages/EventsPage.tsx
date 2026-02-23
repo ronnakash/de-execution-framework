@@ -1,41 +1,42 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchEvents, type EventType } from "../api/events";
+import { queryApi } from "../api/client";
+import type { EventType } from "../api/events";
 import DataTable from "../components/DataTable";
 
 const EVENT_TYPES: EventType[] = ["orders", "executions", "transactions"];
 
-const COLUMN_DEFS: Record<EventType, { key: string; header: string }[]> = {
+const COLUMN_DEFS: Record<EventType, { key: string; header: string; sortable?: boolean }[]> = {
   orders: [
-    { key: "tenant_id", header: "Tenant" },
-    { key: "order_id", header: "Order ID" },
-    { key: "symbol", header: "Symbol" },
-    { key: "side", header: "Side" },
-    { key: "quantity", header: "Quantity" },
-    { key: "price", header: "Price" },
-    { key: "notional_usd", header: "Notional USD" },
-    { key: "transact_time", header: "Time" },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "order_id", header: "Order ID", sortable: true },
+    { key: "symbol", header: "Symbol", sortable: true },
+    { key: "side", header: "Side", sortable: true },
+    { key: "quantity", header: "Quantity", sortable: true },
+    { key: "price", header: "Price", sortable: true },
+    { key: "notional_usd", header: "Notional USD", sortable: true },
+    { key: "transact_time", header: "Time", sortable: true },
   ],
   executions: [
-    { key: "tenant_id", header: "Tenant" },
-    { key: "execution_id", header: "Execution ID" },
-    { key: "order_id", header: "Order ID" },
-    { key: "symbol", header: "Symbol" },
-    { key: "side", header: "Side" },
-    { key: "quantity", header: "Quantity" },
-    { key: "price", header: "Price" },
-    { key: "notional_usd", header: "Notional USD" },
-    { key: "transact_time", header: "Time" },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "execution_id", header: "Execution ID", sortable: true },
+    { key: "order_id", header: "Order ID", sortable: true },
+    { key: "symbol", header: "Symbol", sortable: true },
+    { key: "side", header: "Side", sortable: true },
+    { key: "quantity", header: "Quantity", sortable: true },
+    { key: "price", header: "Price", sortable: true },
+    { key: "notional_usd", header: "Notional USD", sortable: true },
+    { key: "transact_time", header: "Time", sortable: true },
   ],
   transactions: [
-    { key: "tenant_id", header: "Tenant" },
-    { key: "transaction_id", header: "Transaction ID" },
-    { key: "transaction_type", header: "Type" },
-    { key: "amount", header: "Amount" },
-    { key: "currency", header: "Currency" },
-    { key: "amount_usd", header: "Amount USD" },
-    { key: "counterparty", header: "Counterparty" },
-    { key: "transact_time", header: "Time" },
+    { key: "tenant_id", header: "Tenant", sortable: true },
+    { key: "transaction_id", header: "Transaction ID", sortable: true },
+    { key: "transaction_type", header: "Type", sortable: true },
+    { key: "amount", header: "Amount", sortable: true },
+    { key: "currency", header: "Currency", sortable: true },
+    { key: "amount_usd", header: "Amount USD", sortable: true },
+    { key: "counterparty", header: "Counterparty", sortable: true },
+    { key: "transact_time", header: "Time", sortable: true },
   ],
 };
 
@@ -43,16 +44,37 @@ export default function EventsPage() {
   const [eventType, setEventType] = useState<EventType>("orders");
   const [tenantId, setTenantId] = useState("");
   const [date, setDate] = useState("");
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  useEffect(() => setPage(1), [eventType, tenantId, date]);
 
   const query = useQuery({
-    queryKey: ["events", eventType, tenantId, date],
+    queryKey: ["events", eventType, tenantId, date, sortBy, sortOrder, page, pageSize],
     queryFn: () =>
-      fetchEvents(eventType, {
-        tenant_id: tenantId || undefined,
-        date: date || undefined,
-        limit: 100,
+      queryApi<Record<string, unknown>>(`events/${eventType}`, {
+        filters: {
+          ...(tenantId ? { tenant_id: tenantId } : {}),
+          ...(date ? { date } : {}),
+        },
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        page,
+        page_size: pageSize,
       }),
   });
+
+  const handleSortChange = (column: string) => {
+    if (sortBy === column) {
+      setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortBy(column);
+      setSortOrder("desc");
+    }
+    setPage(1);
+  };
 
   return (
     <div className="space-y-4">
@@ -108,8 +130,17 @@ export default function EventsPage() {
       ) : (
         <DataTable
           columns={COLUMN_DEFS[eventType]}
-          data={query.data || []}
+          data={query.data?.data || []}
           emptyMessage={`No ${eventType} found.`}
+          total={query.data?.total}
+          page={query.data?.page}
+          pageSize={query.data?.page_size}
+          totalPages={query.data?.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+          onSortChange={handleSortChange}
         />
       )}
     </div>

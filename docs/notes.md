@@ -11,3 +11,8 @@
 11. when searhing events in the UI for all client as admin user it shows nothing, and when doing so with a specific tenant filtered I now see their data
 12. i dont see any alerts or cases
 13. we need to ensure we have really good e2e test coverage. I want to focus on 3 domains - data algos and ui. We should have comprehensize e2es to see that data ingestion behaves as expected. We should already have pretty good coverage. For algos, we need to test common cases for each algo and also have really strong unit testing for all edge cases. We should also have good UI tests for the sorting and filtering ect. We should have tests for the UI that log in for the client we insert data/generate alerts for by creating a viewer user for it
+
+
+
+
+1. grafana dashboards havo no data. need ui test to see they always work

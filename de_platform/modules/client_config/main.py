@@ -109,7 +109,17 @@ class ClientConfigModule(Module):
         app.router.add_delete("/api/v1/clients/{tenant_id}", self._delete_client)
         app.router.add_get("/api/v1/clients/{tenant_id}/algos", self._get_algos)
         app.router.add_put("/api/v1/clients/{tenant_id}/algos/{algo}", self._update_algo)
+        app.router.add_post("/api/v1/query/clients", self._query_clients)
         return app
+
+    # ── Query endpoint ─────────────────────────────────────────────────
+
+    async def _query_clients(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        rows = await self.db.fetch_all_async("SELECT * FROM clients")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Auth helpers ──────────────────────────────────────────────────────
 

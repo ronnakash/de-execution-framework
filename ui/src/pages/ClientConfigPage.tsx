@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryApi } from "../api/client";
 import {
-  fetchClients,
   fetchAlgoConfigs,
   createClient,
   deleteClient,
@@ -16,9 +16,21 @@ export default function ClientConfigPage() {
   const [showCreate, setShowCreate] = useState(false);
   const queryClient = useQueryClient();
 
+  // Sort/pagination state
+  const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
   const clientsQuery = useQuery({
-    queryKey: ["clients"],
-    queryFn: fetchClients,
+    queryKey: ["clients", sortBy, sortOrder, page, pageSize],
+    queryFn: () =>
+      queryApi<ClientConfig>("clients", {
+        sort_by: sortBy,
+        sort_order: sortOrder,
+        page,
+        page_size: pageSize,
+      }),
   });
 
   const algosQuery = useQuery({
@@ -35,12 +47,23 @@ export default function ClientConfigPage() {
     },
   });
 
+  const handleSortChange = (column: string) => {
+    if (sortBy === column) {
+      setSortOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortBy(column);
+      setSortOrder("desc");
+    }
+    setPage(1);
+  };
+
   const columns = [
-    { key: "tenant_id", header: "Tenant ID" },
-    { key: "display_name", header: "Display Name" },
+    { key: "tenant_id", header: "Tenant ID", sortable: true },
+    { key: "display_name", header: "Display Name", sortable: true },
     {
       key: "mode",
       header: "Mode",
+      sortable: true,
       render: (row: ClientConfig) => (
         <span
           className={`text-xs px-2 py-0.5 rounded-full font-medium ${
@@ -53,7 +76,7 @@ export default function ClientConfigPage() {
         </span>
       ),
     },
-    { key: "algo_run_hour", header: "Run Hour" },
+    { key: "algo_run_hour", header: "Run Hour", sortable: true },
     {
       key: "actions",
       header: "",
@@ -104,8 +127,17 @@ export default function ClientConfigPage() {
       ) : (
         <DataTable
           columns={columns}
-          data={clientsQuery.data || []}
+          data={clientsQuery.data?.data || []}
           emptyMessage="No clients configured."
+          total={clientsQuery.data?.total}
+          page={clientsQuery.data?.page}
+          pageSize={clientsQuery.data?.page_size}
+          totalPages={clientsQuery.data?.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+          onSortChange={handleSortChange}
         />
       )}
 

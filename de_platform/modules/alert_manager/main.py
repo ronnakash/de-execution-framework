@@ -306,6 +306,8 @@ class AlertManagerModule(Module):
         app.router.add_get("/api/v1/cases/summary", self._cases_summary)
         app.router.add_get("/api/v1/cases/{case_id}", self._get_case)
         app.router.add_put("/api/v1/cases/{case_id}/status", self._update_case_status)
+        app.router.add_post("/api/v1/query/alerts", self._query_alerts)
+        app.router.add_post("/api/v1/query/cases", self._query_cases)
         return app
 
     def _resolve_tenant_id(self, request: web.Request) -> str | None:
@@ -454,6 +456,28 @@ class AlertManagerModule(Module):
             summary["by_status"][status] = summary["by_status"].get(status, 0) + 1
             summary["by_severity"][severity] = summary["by_severity"].get(severity, 0) + 1
         return web.json_response(dumps=_dumps, data=summary)
+
+    # ── Query endpoints ──────────────────────────────────────────────────
+
+    async def _query_alerts(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        tenant_id = self._resolve_tenant_id(request)
+        if tenant_id:
+            body.setdefault("filters", {})["tenant_id"] = tenant_id
+        rows = await self.db.fetch_all_async("SELECT * FROM alerts")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
+
+    async def _query_cases(self, request: web.Request) -> web.Response:
+        from de_platform.pipeline.query_framework import handle_query
+
+        body = await request.json()
+        tenant_id = self._resolve_tenant_id(request)
+        if tenant_id:
+            body.setdefault("filters", {})["tenant_id"] = tenant_id
+        rows = await self.db.fetch_all_async("SELECT * FROM cases")
+        return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
