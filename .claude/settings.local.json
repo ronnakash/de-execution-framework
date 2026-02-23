@@ -19,7 +19,15 @@
       "Bash(find:*)",
       "Bash(grep:*)",
       "Bash(docker restart:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(head:*)",
+      "Bash(make build-ui:*)",
+      "Bash(npm run:*)",
+      "Bash(source .venv/bin/activate && python3 -m pytest tests/e2e_ui/ -v -m e2e_ui --tb=short 2>&1)",
+      "Bash(source .venv/bin/activate && python3 -m pytest tests/e2e_ui/test_login.py -v -m e2e_ui --tb=short 2>&1)",
+      "Bash(source .venv/bin/activate && make test-e2e 2>&1)",
+      "Bash(source .venv/bin/activate && python3 -m pytest de_platform/modules/alert_manager/tests/test_main.py -v --tb=short 2>&1)",
+      "Bash(source .venv/bin/activate && python3 -m pytest tests/integration/ -v -m integration --tb=long 2>&1)"
     ]
   }
 }

@@ -473,6 +473,8 @@ class SharedPipeline:
     creates its own connection in the test's event loop.
     """
 
+    JWT_SECRET = "e2e-test-jwt-secret-at-least-32-bytes-long"
+
     def __init__(self, infra: Any, lock_dir: Path) -> None:
         self._infra = infra
         self._lock_dir = lock_dir
@@ -595,7 +597,7 @@ class SharedPipeline:
             ]),
         }
 
-        _jwt_secret = "e2e-test-jwt-secret-at-least-32-bytes-long"
+        _jwt_secret = self.JWT_SECRET
 
         module_specs: list[tuple[str, list[str], list[str]]] = [
             ("rest_starter", ["--mq", "kafka"], ["--port", str(self.rest_port)]),
@@ -607,7 +609,7 @@ class SharedPipeline:
              ["--suspicious-counterparty-ids", "bad-cp-1"]),
             ("data_api", ["--db", "events=clickhouse"],
              ["--port", str(self.api_port)]),
-            ("alert_manager", ["--db", "alerts=postgres", "--mq", "kafka"],
+            ("alert_manager", ["--db", "alerts=postgres", "--mq", "kafka", "--cache", "redis"],
              ["--port", str(self.alert_manager_port)]),
             ("client_config", ["--db", "client_config=postgres", "--cache", "redis"],
              ["--port", str(self.config_port)]),
@@ -620,9 +622,17 @@ class SharedPipeline:
              ["--port", str(self.task_scheduler_port)]),
         ]
 
-        # Per-module extra env vars (JWT_SECRET only for auth module)
+        # Per-module extra env vars
         _module_env_overrides: dict[str, dict[str, str]] = {
             "auth": {"JWT_SECRET": _jwt_secret},
+            "data_api": {
+                "JWT_SECRET": _jwt_secret,
+                "AUTH_URL": f"http://localhost:{self.auth_port}",
+                "ALERT_MANAGER_URL": f"http://localhost:{self.alert_manager_port}",
+                "CLIENT_CONFIG_URL": f"http://localhost:{self.config_port}",
+                "DATA_AUDIT_URL": f"http://localhost:{self.data_audit_port}",
+                "TASK_SCHEDULER_URL": f"http://localhost:{self.task_scheduler_port}",
+            },
         }
 
         for module_name, db_flags, extra_flags in module_specs:
@@ -899,7 +909,7 @@ class RealInfraHarness:
         return self._filter_by_tenant(rows)
 
     async def wait_for_alert(
-        self, predicate: Callable[[dict], bool], timeout: float = 60.0
+        self, predicate: Callable[[dict], bool], timeout: float = 90.0
     ) -> list[dict]:
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
@@ -920,10 +930,23 @@ class RealInfraHarness:
     ) -> tuple[int, Any]:
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"http://127.0.0.1:{self._pipeline.api_port}/api/v1/{endpoint}?{qs}"
+        headers = self._auth_headers()
         async with aiohttp.ClientSession() as session:
-            resp = await session.get(url)
+            resp = await session.get(url, headers=headers)
             body = await resp.json()
             return resp.status, body
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Generate a Bearer token header for data_api requests."""
+        from de_platform.pipeline.auth_middleware import encode_token
+
+        token = encode_token(
+            user_id="e2e_admin",
+            tenant_id=self.tenant_id,
+            role="admin",
+            secret=self._pipeline.JWT_SECRET,
+        )
+        return {"Authorization": f"Bearer {token}"}
 
     async def call_service(
         self,

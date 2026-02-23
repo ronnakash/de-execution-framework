@@ -119,7 +119,11 @@ class DataApiModule(Module):
         if jwt_secret:
             from de_platform.pipeline.auth_middleware import create_auth_middleware
 
-            middlewares.append(create_auth_middleware(jwt_secret))
+            middlewares.append(create_auth_middleware(
+                jwt_secret,
+                public_paths={"/api/v1/auth/login", "/api/v1/auth/refresh"},
+                public_prefixes=("/ui",),
+            ))
         app = web.Application(middlewares=middlewares)
 
         # Event endpoints (native)
@@ -150,6 +154,13 @@ class DataApiModule(Module):
 
         # Serve static UI if the directory is present
         if _STATIC_DIR.exists():
+            index_html = _STATIC_DIR / "index.html"
+
+            async def _serve_index(_request: web.Request) -> web.FileResponse:
+                return web.FileResponse(index_html)
+
+            app.router.add_get("/ui", _serve_index)
+            app.router.add_get("/ui/", _serve_index)
             app.router.add_static("/ui", _STATIC_DIR)
         return app
 

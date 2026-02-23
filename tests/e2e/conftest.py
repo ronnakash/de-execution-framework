@@ -132,7 +132,7 @@ def _init_schemas(request, tmp_path_factory) -> None:
     initialization; other workers wait for completion.
     """
     has_infra_tests = any(
-        item.get_closest_marker("integration") or item.get_closest_marker("e2e")
+        item.get_closest_marker("integration") or item.get_closest_marker("e2e") or item.get_closest_marker("e2e_ui")
         for item in request.session.items
     )
     if not has_infra_tests:
@@ -325,7 +325,8 @@ def shared_pipeline(request, infra, tmp_path_factory):
     Only activates when at least one test is marked with ``e2e``.
     """
     has_e2e = any(
-        item.get_closest_marker("e2e") for item in request.session.items
+        item.get_closest_marker("e2e") or item.get_closest_marker("e2e_ui")
+        for item in request.session.items
     )
     if not has_e2e:
         yield None

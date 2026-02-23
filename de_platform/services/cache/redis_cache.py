@@ -107,6 +107,9 @@ class RedisCache(CacheInterface):
     def _stop_pubsub(self) -> None:
         if self._pubsub_thread is not None:
             self._pubsub_thread.stop()
+            # Wait for the thread to finish before closing the socket to
+            # avoid "Bad file descriptor" errors from in-flight reads.
+            self._pubsub_thread.join(timeout=2.0)
             self._pubsub_thread = None
         if self._pubsub is not None:
             self._pubsub.close()

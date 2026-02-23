@@ -223,3 +223,93 @@ async def test_update_case_status() -> None:
 
     cases_after = db.fetch_all("SELECT * FROM cases")
     assert cases_after[0]["status"] == "investigating"
+
+
+# ── Configurable aggregation window tests ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_configurable_aggregation_window() -> None:
+    """Verify that per-tenant aggregation window is read from cache."""
+    from de_platform.services.cache.memory_cache import MemoryCache
+
+    mq = MemoryQueue()
+    db = MemoryDatabase()
+    cache = MemoryCache()
+    lifecycle = LifecycleManager()
+    logger = LoggerFactory(default_impl="memory")
+    config = ModuleConfig({})
+
+    cache.set("client_config:t1", {
+        "mode": "realtime",
+        "case_aggregation_minutes": 1,
+    })
+
+    module = AlertManagerModule(
+        config=config, logger=logger, mq=mq, db=db,
+        lifecycle=lifecycle, metrics=NoopMetrics(),
+        secrets=EnvSecrets(), cache=cache,
+    )
+    await module.initialize()
+
+    assert module._get_aggregation_minutes("t1") == 1
+    assert module._get_aggregation_minutes("unknown_tenant") == 60
+
+
+@pytest.mark.asyncio
+async def test_default_aggregation_window_without_cache() -> None:
+    """Verify that the module works without CacheInterface (cache=None)."""
+    module, _, _ = await _setup_module()
+    assert module._get_aggregation_minutes("any_tenant") == 60
+
+
+@pytest.mark.asyncio
+async def test_same_algo_outside_window_creates_new_case() -> None:
+    """Alerts from the same algorithm outside the aggregation window
+    should create separate cases."""
+    from de_platform.services.cache.memory_cache import MemoryCache
+
+    mq = MemoryQueue()
+    db = MemoryDatabase()
+    cache = MemoryCache()
+    lifecycle = LifecycleManager()
+    logger = LoggerFactory(default_impl="memory")
+
+    # Set a 0-minute aggregation window -- every alert is outside the window
+    cache.set("client_config:t1", {
+        "mode": "realtime",
+        "case_aggregation_minutes": 0,
+    })
+
+    module = AlertManagerModule(
+        config=ModuleConfig({}), logger=logger, mq=mq, db=db,
+        lifecycle=lifecycle, metrics=NoopMetrics(),
+        secrets=EnvSecrets(), cache=cache,
+    )
+    await module.initialize()
+
+    a1 = _make_alert(event_id="o1", algorithm="large_notional")
+    a2 = _make_alert(event_id="o2", algorithm="large_notional")
+    mq.publish(ALERTS, a1)
+    await module._consume_and_process()
+    mq.publish(ALERTS, a2)
+    await module._consume_and_process()
+
+    cases = db.fetch_all("SELECT * FROM cases")
+    assert len(cases) == 2  # separate cases because window=0
+
+
+@pytest.mark.asyncio
+async def test_case_severity_does_not_downgrade() -> None:
+    """A lower-severity alert should not downgrade the case severity."""
+    module, mq, db = await _setup_module()
+    a1 = _make_alert(event_id="o1", algorithm="large_notional", severity="critical")
+    a2 = _make_alert(event_id="o2", algorithm="large_notional", severity="low")
+    mq.publish(ALERTS, a1)
+    await module._consume_and_process()
+    mq.publish(ALERTS, a2)
+    await module._consume_and_process()
+
+    cases = db.fetch_all("SELECT * FROM cases")
+    assert len(cases) == 1
+    assert cases[0]["severity"] == "critical"  # stays at max

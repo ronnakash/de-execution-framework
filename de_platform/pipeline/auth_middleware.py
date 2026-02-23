@@ -22,19 +22,21 @@ _DEFAULT_PUBLIC_PATHS = {"/health", "/health/startup"}
 def create_auth_middleware(
     jwt_secret: str,
     public_paths: set[str] | None = None,
+    public_prefixes: tuple[str, ...] = (),
 ) -> web.middleware:
     """Create an aiohttp middleware that verifies JWT Bearer tokens.
 
-    Requests to *public_paths* bypass authentication.  All other requests
-    must include an ``Authorization: Bearer <token>`` header with a valid
-    HS256-signed JWT.  On success the middleware sets ``request["user_id"]``,
+    Requests to *public_paths* (exact match) or paths starting with any
+    *public_prefixes* bypass authentication.  All other requests must include
+    an ``Authorization: Bearer <token>`` header with a valid HS256-signed JWT.
+    On success the middleware sets ``request["user_id"]``,
     ``request["tenant_id"]``, and ``request["role"]`` from the token payload.
     """
     allowed = _DEFAULT_PUBLIC_PATHS | (public_paths or set())
 
     @web.middleware
     async def auth_middleware(request: web.Request, handler):
-        if request.path in allowed:
+        if request.path in allowed or request.path.startswith(public_prefixes):
             return await handler(request)
 
         auth_header = request.headers.get("Authorization", "")

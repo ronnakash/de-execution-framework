@@ -32,6 +32,7 @@ from aiohttp import web
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import Module
 from de_platform.pipeline.topics import ALERTS
+from de_platform.services.cache.interface import CacheInterface
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
@@ -68,6 +69,7 @@ class AlertManagerModule(Module):
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
         secrets: SecretsInterface,
+        cache: CacheInterface | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
@@ -76,6 +78,8 @@ class AlertManagerModule(Module):
         self.lifecycle = lifecycle
         self.metrics = metrics
         self.secrets = secrets
+        self._cache = cache
+        self._config_cache: Any = None
         self._runner: web.AppRunner | None = None
         self._known_alerts: set[tuple[str, str]] = set()
 
@@ -85,6 +89,12 @@ class AlertManagerModule(Module):
         await self.db.connect_async()
         self.lifecycle.on_shutdown(self._stop_server)
         self.lifecycle.on_shutdown(self.db.disconnect_async)
+
+        if self._cache is not None:
+            from de_platform.pipeline.client_config_cache import ClientConfigCache
+            self._config_cache = ClientConfigCache(self._cache)
+            self._config_cache.start()
+            self.lifecycle.on_shutdown(lambda: self._config_cache.stop())
 
         await self._load_dedup_set()
         self.log.info("Alert Manager initialized", port=self.port)
@@ -105,6 +115,21 @@ class AlertManagerModule(Module):
             await asyncio.sleep(0.01)
 
         return 0
+
+    # ── Per-tenant configuration ───────────────────────────────────────────
+
+    def _get_aggregation_minutes(self, tenant_id: str) -> int:
+        """Return the case aggregation window in minutes for the given tenant.
+
+        Reads from ClientConfigCache if available (populated by the client_config
+        service). Falls back to _DEFAULT_AGGREGATION_MINUTES (60).
+        """
+        if self._config_cache is not None:
+            window_config = self._config_cache.get_window_config(tenant_id)
+            return window_config.get(
+                "case_aggregation_minutes", _DEFAULT_AGGREGATION_MINUTES
+            )
+        return _DEFAULT_AGGREGATION_MINUTES
 
     # ── Kafka consumer ────────────────────────────────────────────────────
 
@@ -144,6 +169,9 @@ class AlertManagerModule(Module):
 
     async def _load_dedup_set(self) -> None:
         self._known_alerts = set()
+        # Note: SELECT * is required because MemoryDatabase does not support
+        # SELECT <specific_columns>. For very large tables, consider a
+        # Postgres-specific column projection or paginated load.
         rows = await self.db.fetch_all_async("SELECT * FROM alerts")
         for row in rows:
             self._known_alerts.add((row.get("algorithm", ""), row.get("event_id", "")))
@@ -179,40 +207,42 @@ class AlertManagerModule(Module):
     async def _find_matching_case(
         self, tenant_id: str, algorithm: str, event_id: str,
     ) -> dict | None:
-        all_cases = await self.db.fetch_all_async(
-            "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id],
+        # Rule 2: cross-algorithm grouping by event_id
+        # Find alerts with the same event_id, filter by tenant in Python
+        # (MemoryDatabase supports single-column WHERE)
+        matching_alerts = await self.db.fetch_all_async(
+            "SELECT * FROM alerts WHERE event_id = $1", [event_id]
         )
-        open_cases = [c for c in all_cases if c.get("status") == "open"]
-        if not open_cases:
-            return None
-
-        # Collect case_ids to narrow subsequent lookups
-        case_ids = {c["case_id"] for c in open_cases}
-
-        # Rule 2: same event_id in case alerts (cross-algorithm grouping)
-        all_case_alerts = await self.db.fetch_all_async("SELECT * FROM case_alerts")
-        matching_case_alerts = [
-            r for r in all_case_alerts if r.get("case_id") in case_ids
-        ]
-        alert_ids_needed = {r["alert_id"] for r in matching_case_alerts}
-        all_alerts = await self.db.fetch_all_async(
-            "SELECT * FROM alerts WHERE tenant_id = $1", [tenant_id],
-        )
-        alert_by_id = {
-            a["alert_id"]: a for a in all_alerts if a["alert_id"] in alert_ids_needed
+        matching_alert_ids = {
+            a["alert_id"] for a in matching_alerts
+            if a.get("tenant_id") == tenant_id
         }
 
-        for case in open_cases:
-            case_alert_ids = {
-                r["alert_id"] for r in matching_case_alerts
-                if r.get("case_id") == case["case_id"]
-            }
-            for aid in case_alert_ids:
-                a = alert_by_id.get(aid)
-                if a and a.get("event_id") == event_id:
-                    return case
+        if matching_alert_ids:
+            # Check if any of these alerts are linked to an open case
+            for alert_id in matching_alert_ids:
+                case_links = await self.db.fetch_all_async(
+                    "SELECT * FROM case_alerts WHERE alert_id = $1", [alert_id]
+                )
+                for link in case_links:
+                    case = await self.db.fetch_one_async(
+                        "SELECT * FROM cases WHERE case_id = $1", [link["case_id"]]
+                    )
+                    if (case
+                            and case.get("tenant_id") == tenant_id
+                            and case.get("status") == "open"):
+                        return case
 
         # Rule 1: same algorithm, within aggregation window
+        tenant_cases = await self.db.fetch_all_async(
+            "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id]
+        )
+        open_cases = [c for c in tenant_cases if c.get("status") == "open"]
+
+        cutoff = datetime.utcnow() - timedelta(
+            minutes=self._get_aggregation_minutes(tenant_id),
+        )
+
         for case in open_cases:
             case_algos = case.get("algorithms", [])
             if isinstance(case_algos, str):
@@ -222,9 +252,6 @@ class AlertManagerModule(Module):
                 if last_alert:
                     if isinstance(last_alert, str):
                         last_alert = datetime.fromisoformat(last_alert)
-                    cutoff = datetime.utcnow() - timedelta(
-                        minutes=_DEFAULT_AGGREGATION_MINUTES,
-                    )
                     if last_alert.replace(tzinfo=None) >= cutoff:
                         return case
 
@@ -338,9 +365,13 @@ class AlertManagerModule(Module):
         limit = int(request.rel_url.query.get("limit", 50))
         offset = int(request.rel_url.query.get("offset", 0))
 
-        rows = await self.db.fetch_all_async("SELECT * FROM alerts")
         if tenant_id:
-            rows = [r for r in rows if r.get("tenant_id") == tenant_id]
+            rows = await self.db.fetch_all_async(
+                "SELECT * FROM alerts WHERE tenant_id = $1", [tenant_id]
+            )
+        else:
+            rows = await self.db.fetch_all_async("SELECT * FROM alerts")
+
         if severity:
             rows = [r for r in rows if r.get("severity") == severity]
         if algorithm:
@@ -350,28 +381,35 @@ class AlertManagerModule(Module):
 
     async def _get_alert(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
-        rows = await self.db.fetch_all_async("SELECT * FROM alerts")
-        for row in rows:
-            if row.get("alert_id") == alert_id:
-                return web.json_response(dumps=_dumps, data=row)
-        raise web.HTTPNotFound(
-            text=json.dumps({"error": "alert not found"}),
-            content_type="application/json",
+        row = await self.db.fetch_one_async(
+            "SELECT * FROM alerts WHERE alert_id = $1", [alert_id]
         )
+        if not row:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "alert not found"}),
+                content_type="application/json",
+            )
+        return web.json_response(dumps=_dumps, data=row)
 
     async def _get_alert_case(self, request: web.Request) -> web.Response:
         alert_id = request.match_info["alert_id"]
-        case_alerts = await self.db.fetch_all_async("SELECT * FROM case_alerts")
-        for ca in case_alerts:
-            if ca.get("alert_id") == alert_id:
-                cases = await self.db.fetch_all_async("SELECT * FROM cases")
-                for c in cases:
-                    if c.get("case_id") == ca["case_id"]:
-                        return web.json_response(dumps=_dumps, data=c)
-        raise web.HTTPNotFound(
-            text=json.dumps({"error": "no case found for this alert"}),
-            content_type="application/json",
+        case_alert = await self.db.fetch_one_async(
+            "SELECT * FROM case_alerts WHERE alert_id = $1", [alert_id]
         )
+        if not case_alert:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "no case found for this alert"}),
+                content_type="application/json",
+            )
+        case = await self.db.fetch_one_async(
+            "SELECT * FROM cases WHERE case_id = $1", [case_alert["case_id"]]
+        )
+        if not case:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": "no case found for this alert"}),
+                content_type="application/json",
+            )
+        return web.json_response(dumps=_dumps, data=case)
 
     async def _list_cases(self, request: web.Request) -> web.Response:
         self.metrics.counter("http_requests_total", tags={
@@ -383,9 +421,13 @@ class AlertManagerModule(Module):
         limit = int(request.rel_url.query.get("limit", 50))
         offset = int(request.rel_url.query.get("offset", 0))
 
-        rows = await self.db.fetch_all_async("SELECT * FROM cases")
         if tenant_id:
-            rows = [r for r in rows if r.get("tenant_id") == tenant_id]
+            rows = await self.db.fetch_all_async(
+                "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id]
+            )
+        else:
+            rows = await self.db.fetch_all_async("SELECT * FROM cases")
+
         if status:
             rows = [r for r in rows if r.get("status") == status]
         if severity:
@@ -395,12 +437,9 @@ class AlertManagerModule(Module):
 
     async def _get_case(self, request: web.Request) -> web.Response:
         case_id = request.match_info["case_id"]
-        cases = await self.db.fetch_all_async("SELECT * FROM cases")
-        case = None
-        for c in cases:
-            if c.get("case_id") == case_id:
-                case = c
-                break
+        case = await self.db.fetch_one_async(
+            "SELECT * FROM cases WHERE case_id = $1", [case_id]
+        )
         if not case:
             raise web.HTTPNotFound(
                 text=json.dumps({"error": "case not found"}),
@@ -408,10 +447,18 @@ class AlertManagerModule(Module):
             )
 
         # Attach the alert list
-        case_alerts = await self.db.fetch_all_async("SELECT * FROM case_alerts")
-        alert_ids = {ca["alert_id"] for ca in case_alerts if ca.get("case_id") == case_id}
-        all_alerts = await self.db.fetch_all_async("SELECT * FROM alerts")
-        alerts = [a for a in all_alerts if a.get("alert_id") in alert_ids]
+        case_alert_rows = await self.db.fetch_all_async(
+            "SELECT * FROM case_alerts WHERE case_id = $1", [case_id]
+        )
+        alert_ids = {ca["alert_id"] for ca in case_alert_rows}
+
+        alerts = []
+        for aid in alert_ids:
+            alert = await self.db.fetch_one_async(
+                "SELECT * FROM alerts WHERE alert_id = $1", [aid]
+            )
+            if alert:
+                alerts.append(alert)
 
         result = dict(case)
         result["alerts"] = alerts
@@ -428,12 +475,9 @@ class AlertManagerModule(Module):
                 content_type="application/json",
             )
 
-        cases = await self.db.fetch_all_async("SELECT * FROM cases")
-        case = None
-        for c in cases:
-            if c.get("case_id") == case_id:
-                case = c
-                break
+        case = await self.db.fetch_one_async(
+            "SELECT * FROM cases WHERE case_id = $1", [case_id]
+        )
         if not case:
             raise web.HTTPNotFound(
                 text=json.dumps({"error": "case not found"}),
@@ -452,9 +496,12 @@ class AlertManagerModule(Module):
 
     async def _cases_summary(self, request: web.Request) -> web.Response:
         tenant_id = self._resolve_tenant_id(request)
-        cases = await self.db.fetch_all_async("SELECT * FROM cases")
         if tenant_id:
-            cases = [c for c in cases if c.get("tenant_id") == tenant_id]
+            cases = await self.db.fetch_all_async(
+                "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id]
+            )
+        else:
+            cases = await self.db.fetch_all_async("SELECT * FROM cases")
 
         summary = {
             "total": len(cases),

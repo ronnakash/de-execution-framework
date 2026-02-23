@@ -22,7 +22,7 @@ interface Props<T> {
   onSortChange?: (column: string) => void;
 }
 
-export default function DataTable<T extends Record<string, unknown>>({
+export default function DataTable<T extends Record<string, any>>({
   columns,
   data,
   emptyMessage = "No data found.",

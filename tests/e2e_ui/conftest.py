@@ -39,7 +39,7 @@ def browser():
 @pytest.fixture
 def base_url(shared_pipeline) -> str:
     """Base URL for the data_api UI."""
-    return f"http://localhost:{shared_pipeline.data_api_port}"
+    return f"http://localhost:{shared_pipeline.api_port}"
 
 
 @pytest.fixture

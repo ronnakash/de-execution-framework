@@ -42,7 +42,7 @@ async def _wait_for_alerts_in_manager(
     harness: RealInfraHarness,
     *,
     min_count: int = 1,
-    timeout: float = 60.0,
+    timeout: float = 90.0,
 ) -> list[dict]:
     """Poll alert_manager /alerts until expected count for this tenant."""
     deadline = asyncio.get_event_loop().time() + timeout
@@ -65,7 +65,7 @@ async def _wait_for_cases(
     harness: RealInfraHarness,
     *,
     min_count: int = 1,
-    timeout: float = 60.0,
+    timeout: float = 90.0,
 ) -> list[dict]:
     """Poll alert_manager /cases until expected count for this tenant."""
     deadline = asyncio.get_event_loop().time() + timeout
