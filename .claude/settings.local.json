@@ -28,7 +28,10 @@
       "Bash(source .venv/bin/activate && make test-e2e 2>&1)",
       "Bash(source .venv/bin/activate && python3 -m pytest de_platform/modules/alert_manager/tests/test_main.py -v --tb=short 2>&1)",
       "Bash(source .venv/bin/activate && python3 -m pytest tests/integration/ -v -m integration --tb=long 2>&1)",
-      "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check de_platform/modules/alert_manager/ 2>&1)"
+      "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check de_platform/modules/alert_manager/ 2>&1)",
+      "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check tests/helpers/step_logger.py tests/helpers/harness.py tests/helpers/pytest_pipeline_report.py tests/unit/test_step_logger.py 2>&1)",
+      "Bash(source /Users/a1234/repositories/python/de-execution-framework/.venv/bin/activate && ruff check tests/helpers/step_logger.py tests/unit/test_step_logger.py 2>&1)",
+      "Bash(docker compose:*)"
     ]
   }
 }

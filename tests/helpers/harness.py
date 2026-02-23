@@ -22,7 +22,7 @@ import socket
 import subprocess
 import sys
 import uuid
-from typing import Any, Callable, Protocol
+from typing import Any, AsyncContextManager, Callable, Protocol
 
 import aiohttp
 from aiohttp.test_utils import TestClient, TestServer
@@ -46,9 +46,7 @@ from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.metrics.memory_metrics import MemoryMetrics
 from de_platform.services.metrics.noop_metrics import NoopMetrics
-
 from tests.helpers.diagnostics import TestDiagnostics
-
 from tests.helpers.ingestion import (
     ingest_files_memory,
     ingest_files_subprocess,
@@ -57,7 +55,7 @@ from tests.helpers.ingestion import (
     ingest_rest_http,
     ingest_rest_inline,
 )
-
+from tests.helpers.step_logger import StepLogger
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +91,7 @@ async def poll_until(
 
 class PipelineHarness(Protocol):
     tenant_id: str
+    step_logger: StepLogger
 
     async def ingest(
         self, method: str, event_type: str, events: list[dict]
@@ -128,6 +127,8 @@ class PipelineHarness(Protocol):
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, Any]: ...
+
+    def step(self, name: str, description: str = "") -> AsyncContextManager: ...
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -178,6 +179,7 @@ class MemoryHarness:
         self.persistence: PersistenceModule | None = None
         self.algos: AlgosModule | None = None
         self.diagnostics: TestDiagnostics | None = None
+        self.step_logger: StepLogger = StepLogger()
 
     async def _ensure_modules(self) -> None:
         if self.normalizer is not None:
@@ -222,6 +224,7 @@ class MemoryHarness:
             memory_queue=self.mq,
             clickhouse_db=self.clickhouse_db,
         )
+        self.step_logger = StepLogger(diagnostics=self.diagnostics)
 
     # ── Pipeline step helpers ────────────────────────────────────────────
 
@@ -376,6 +379,9 @@ class MemoryHarness:
         headers: dict[str, str] | None = None,
     ) -> tuple[int, Any]:
         raise NotImplementedError("call_service is not supported in MemoryHarness")
+
+    def step(self, name: str, description: str = ""):
+        return self.step_logger.step(name, description)
 
     async def consume_alert_topic(self) -> dict | None:
         return self.mq.consume_one(ALERTS)
@@ -818,6 +824,7 @@ class RealInfraHarness:
         self.tenant_id: str = f"INTEGRATION_CLIENT_{uuid.uuid4().hex[:12]}"
         self._alerts_db: Any = None
         self.diagnostics: TestDiagnostics | None = None
+        self.step_logger: StepLogger = StepLogger()
 
     async def __aenter__(self) -> RealInfraHarness:
         from de_platform.services.database.postgres_database import PostgresDatabase
@@ -837,6 +844,7 @@ class RealInfraHarness:
             clickhouse_db=self._pipeline._clickhouse_db,
             postgres_db=self._alerts_db,
         )
+        self.step_logger = StepLogger(diagnostics=self.diagnostics)
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -969,6 +977,9 @@ class RealInfraHarness:
             except Exception:
                 body = await resp.text()
             return resp.status, body
+
+    def step(self, name: str, description: str = ""):
+        return self.step_logger.step(name, description)
 
     async def publish_to_normalizer(self, topic: str, msg: dict) -> None:
         self._pipeline._kafka_producer.publish(topic, msg)

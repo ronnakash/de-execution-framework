@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-stop infra-up infra-down setup setup-full
+.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-stop infra-up infra-down setup setup-full docker-build docker-up docker-down docker-infra docker-app docker-logs docker-ps docker-clean
 
 PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
@@ -73,3 +73,29 @@ setup:
 setup-full:
 	python3.12 -m venv .venv
 	.venv/bin/pip install -e '.[dev,infra]'
+
+# ── Docker ─────────────────────────────────────────────────────────
+
+docker-build:
+	docker build -t de-platform:latest .
+
+docker-up:
+	docker compose --profile full up -d
+
+docker-down:
+	docker compose --profile full down
+
+docker-infra:
+	docker compose --profile infra up -d
+
+docker-app:
+	docker compose --profile app up -d
+
+docker-logs:
+	docker compose --profile full logs -f
+
+docker-ps:
+	docker compose --profile full ps
+
+docker-clean:
+	docker compose --profile full down -v

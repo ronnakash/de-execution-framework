@@ -3,7 +3,33 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "de-platform"
+  - job_name: "rest-starter"
     static_configs:
-      - targets: ["app:9091"]
-    metrics_path: /metrics
+      - targets: ["rest-starter:9100"]
+  - job_name: "normalizer"
+    static_configs:
+      - targets: ["normalizer:9101"]
+  - job_name: "persistence"
+    static_configs:
+      - targets: ["persistence:9102"]
+  - job_name: "algos"
+    static_configs:
+      - targets: ["algos:9103"]
+  - job_name: "alert-manager"
+    static_configs:
+      - targets: ["alert-manager:9104"]
+  - job_name: "data-api"
+    static_configs:
+      - targets: ["data-api:9105"]
+  - job_name: "client-config"
+    static_configs:
+      - targets: ["client-config:9106"]
+  - job_name: "auth"
+    static_configs:
+      - targets: ["auth:9107"]
+  - job_name: "data-audit"
+    static_configs:
+      - targets: ["data-audit:9108"]
+  - job_name: "task-scheduler"
+    static_configs:
+      - targets: ["task-scheduler:9109"]
