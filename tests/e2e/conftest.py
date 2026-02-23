@@ -222,6 +222,7 @@ def _ensure_kafka_topics(infra: InfraConfig) -> None:
 
     from de_platform.pipeline.topics import (
         ALERTS,
+        AUDIT_COUNTS,
         DUPLICATES,
         EXECUTIONS_PERSISTENCE,
         NORMALIZATION_ERRORS,
@@ -245,7 +246,7 @@ def _ensure_kafka_topics(infra: InfraConfig) -> None:
         NORMALIZATION_ERRORS, DUPLICATES,
         ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE, TRANSACTIONS_PERSISTENCE,
         TRADES_ALGOS, TRANSACTIONS_ALGOS,
-        ALERTS,
+        ALERTS, AUDIT_COUNTS,
     ]
 
     # Create missing topics

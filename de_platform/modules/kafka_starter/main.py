@@ -25,6 +25,7 @@ from typing import Any
 
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import Module
+from de_platform.pipeline.audit_accumulator import AuditAccumulator
 from de_platform.pipeline.serialization import _now_iso, error_to_dict
 from de_platform.pipeline.topics import (
     NORMALIZATION_ERRORS,
@@ -58,6 +59,7 @@ class KafkaStarterModule(Module):
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
+        self._audit = AuditAccumulator(self.mq, source="kafka")
         orders_topic = self.config.get("client-orders-topic", "client_orders")
         executions_topic = self.config.get("client-executions-topic", "client_executions")
         transactions_topic = self.config.get("client-transactions-topic", "client_transactions")
@@ -85,9 +87,11 @@ class KafkaStarterModule(Module):
                         self._process_message(event_type, norm_topic, msg)
             except Exception as exc:
                 self.log.error("Processing error", module="kafka_starter", error=str(exc))
+            self._audit.maybe_flush()
             if self.lifecycle.is_shutting_down:
                 break
             await asyncio.sleep(0.01)
+        self._audit.flush()
         return 0
 
     def _process_message(
@@ -119,6 +123,9 @@ class KafkaStarterModule(Module):
             self.mq.publish(self.client_errors_topic, err_msg, key=msg_key)
 
         if valid:
+            for validated in valid:
+                tenant_id = validated.get("tenant_id", "unknown")
+                self._audit.count(tenant_id, event_type)
             self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "kafka_starter", "event_type": event_type, "method": "kafka"})
         if errors:
             self.metrics.counter("events_errors_total", value=float(len(errors)), tags={"service": "kafka_starter", "event_type": event_type})

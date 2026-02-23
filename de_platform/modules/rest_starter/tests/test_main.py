@@ -16,6 +16,7 @@ from de_platform.pipeline.topics import (
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.message_queue.memory_queue import MemoryQueue
+from de_platform.services.metrics.noop_metrics import NoopMetrics
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -188,3 +189,43 @@ async def test_invalid_json_body(client: TestClient, mq: MemoryQueue):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status == 400
+
+
+# ── Audit accumulator tests ──────────────────────────────────────────────────
+
+async def test_ingest_publishes_audit_count():
+    """After ingesting events via the module, audit_counts topic gets a message."""
+    from de_platform.modules.rest_starter.main import RestStarterModule
+    from de_platform.pipeline.topics import AUDIT_COUNTS
+
+    mq = MemoryQueue()
+    lifecycle = LifecycleManager()
+    module = RestStarterModule(
+        config=ModuleConfig({"port": 0}),
+        logger=LoggerFactory(),
+        mq=mq,
+        lifecycle=lifecycle,
+        metrics=NoopMetrics(),
+    )
+    await module.initialize()
+
+    # Force immediate flush by setting last_flush far in the past
+    module._audit._last_flush = 0.0
+
+    app = web.Application()
+    app.router.add_post("/api/v1/orders", module._ingest_orders)
+    async with TestClient(TestServer(app)) as client:
+        await client.post("/api/v1/orders", json={"events": [VALID_ORDER, VALID_ORDER]})
+
+    # The maybe_flush should have triggered
+    msgs = []
+    while True:
+        m = mq.consume_one(AUDIT_COUNTS)
+        if m is None:
+            break
+        msgs.append(m)
+    assert len(msgs) == 1
+    assert msgs[0]["source"] == "rest"
+    assert msgs[0]["event_type"] == "order"
+    assert msgs[0]["received"] == 2
+    assert msgs[0]["tenant_id"] == "t1"

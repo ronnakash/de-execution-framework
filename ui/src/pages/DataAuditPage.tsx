@@ -11,19 +11,21 @@ export default function DataAuditPage() {
   const [tenantId, setTenantId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [source, setSource] = useState("");
   const [sortBy, setSortBy] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  useEffect(() => setPage(1), [tenantId, startDate, endDate]);
+  useEffect(() => setPage(1), [tenantId, startDate, endDate, source]);
 
   const dailyQuery = useQuery({
-    queryKey: ["audit-daily", tenantId, sortBy, sortOrder, page, pageSize],
+    queryKey: ["audit-daily", tenantId, source, sortBy, sortOrder, page, pageSize],
     queryFn: () =>
       queryApi<DailyAudit>("audit/daily", {
         filters: {
           ...(tenantId ? { tenant_id: tenantId } : {}),
+          ...(source ? { source } : {}),
         },
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -51,6 +53,7 @@ export default function DataAuditPage() {
     { key: "date", header: "Date", sortable: true },
     { key: "tenant_id", header: "Tenant", sortable: true },
     { key: "event_type", header: "Event Type", sortable: true },
+    { key: "source", header: "Source", sortable: true },
     {
       key: "received_count",
       header: "Received",
@@ -129,6 +132,19 @@ export default function DataAuditPage() {
             placeholder="All tenants"
             className="px-3 py-1.5 border border-gray-300 rounded text-sm w-48"
           />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Source</label>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            className="px-3 py-1.5 border border-gray-300 rounded text-sm"
+          >
+            <option value="">All sources</option>
+            <option value="rest">REST</option>
+            <option value="kafka">Kafka</option>
+            <option value="file">File</option>
+          </select>
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">

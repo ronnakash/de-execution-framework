@@ -183,3 +183,36 @@ async def test_multiple_messages_in_one_tick():
             break
         msgs.append(m)
     assert len(msgs) == 2
+
+
+# ── Audit accumulator tests ──────────────────────────────────────────────────
+
+async def test_process_message_publishes_audit_count():
+    """After processing a message, audit_counts topic gets a message."""
+    from de_platform.pipeline.topics import AUDIT_COUNTS
+
+    mq = MemoryQueue()
+    mq.publish("client_orders", VALID_ORDER)
+    module, lifecycle = _build_module(mq)
+    await module.initialize()
+
+    # Process one message manually
+    for inbound_topic, (event_type, norm_topic) in module._routes.items():
+        msg = mq.consume_one(inbound_topic)
+        if msg is not None:
+            module._process_message(event_type, norm_topic, msg)
+
+    # Force flush
+    module._audit.flush()
+
+    msgs = []
+    while True:
+        m = mq.consume_one(AUDIT_COUNTS)
+        if m is None:
+            break
+        msgs.append(m)
+    assert len(msgs) == 1
+    assert msgs[0]["source"] == "kafka"
+    assert msgs[0]["event_type"] == "order"
+    assert msgs[0]["received"] == 1
+    assert msgs[0]["tenant_id"] == "t1"

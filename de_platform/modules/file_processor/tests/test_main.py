@@ -12,6 +12,7 @@ from de_platform.pipeline.topics import (
     TRADE_NORMALIZATION,
     TX_NORMALIZATION,
 )
+from de_platform.services.database.memory_database import MemoryDatabase
 from de_platform.services.filesystem.memory_filesystem import MemoryFileSystem
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.message_queue.memory_queue import MemoryQueue
@@ -175,3 +176,80 @@ async def test_missing_file_path_raises():
     await module.initialize()
     with pytest.raises(ValueError, match="file-path"):
         await module.validate()
+
+
+# ── Audit accumulator tests ──────────────────────────────────────────────────
+
+async def test_file_processing_publishes_audit_count():
+    """After processing a file, audit_counts topic gets a message."""
+    from de_platform.modules.file_processor.main import FileProcessorModule
+    from de_platform.pipeline.topics import AUDIT_COUNTS
+
+    fs = MemoryFileSystem()
+    data = json.dumps([VALID_ORDER, VALID_ORDER]).encode()
+    fs.write("orders.json", data)
+    mq = MemoryQueue()
+    config = ModuleConfig({"file-path": "orders.json", "event-type": "order"})
+    module = FileProcessorModule(config, LoggerFactory(), fs, mq, NoopMetrics())
+    await module.run()
+
+    msgs = []
+    while True:
+        m = mq.consume_one(AUDIT_COUNTS)
+        if m is None:
+            break
+        msgs.append(m)
+    assert len(msgs) == 1
+    assert msgs[0]["source"] == "file"
+    assert msgs[0]["event_type"] == "order"
+    assert msgs[0]["received"] == 2
+    assert msgs[0]["tenant_id"] == "t1"
+
+
+async def test_file_processing_creates_file_audit_record():
+    """File processor writes a file_audit row with correct counts."""
+    from de_platform.modules.file_processor.main import FileProcessorModule
+
+    fs = MemoryFileSystem()
+    data = json.dumps([VALID_ORDER, VALID_ORDER]).encode()
+    fs.write("orders.json", data)
+    mq = MemoryQueue()
+    db = MemoryDatabase()
+    db.connect()
+    config = ModuleConfig({"file-path": "orders.json", "event-type": "order"})
+    module = FileProcessorModule(
+        config, LoggerFactory(), fs, mq, NoopMetrics(), db=db,
+    )
+    rc = await module.run()
+    assert rc == 0
+
+    rows = db.fetch_all("SELECT * FROM file_audit")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["total_count"] == 2
+    assert rows[0]["processed_count"] == 2
+    assert rows[0]["error_count"] == 0
+    assert rows[0]["tenant_id"] == "t1"
+
+
+async def test_file_processing_error_creates_failed_record():
+    """File processor writes a failed file_audit row on error."""
+    from de_platform.modules.file_processor.main import FileProcessorModule
+
+    fs = MemoryFileSystem()
+    # Don't write the file so fs.read() will fail
+    mq = MemoryQueue()
+    db = MemoryDatabase()
+    db.connect()
+    config = ModuleConfig({"file-path": "missing.json", "event-type": "order"})
+    module = FileProcessorModule(
+        config, LoggerFactory(), fs, mq, NoopMetrics(), db=db,
+    )
+    try:
+        await module.run()
+    except Exception:
+        pass
+
+    rows = db.fetch_all("SELECT * FROM file_audit")
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"

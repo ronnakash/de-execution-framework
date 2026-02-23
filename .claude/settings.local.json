@@ -15,7 +15,8 @@
       "Bash(ls:*)",
       "Bash(test:*)",
       "Bash(make lint:*)",
-      "Bash(make test:*)"
+      "Bash(make test:*)",
+      "Bash(find:*)"
     ]
   }
 }

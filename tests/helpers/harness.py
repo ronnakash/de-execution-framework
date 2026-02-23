@@ -556,6 +556,7 @@ class SharedPipeline:
     def _start_subprocesses(self) -> None:
         from de_platform.pipeline.topics import (
             ALERTS,
+            AUDIT_COUNTS,
             DUPLICATES,
             EXECUTIONS_PERSISTENCE,
             NORMALIZATION_ERRORS,
@@ -588,7 +589,7 @@ class SharedPipeline:
             "algos": f"{TRADES_ALGOS},{TRANSACTIONS_ALGOS}",
             "alert_manager": ALERTS,
             "data_audit": ",".join([
-                TRADE_NORMALIZATION, TX_NORMALIZATION,
+                AUDIT_COUNTS,
                 ORDERS_PERSISTENCE, EXECUTIONS_PERSISTENCE,
                 TRANSACTIONS_PERSISTENCE, NORMALIZATION_ERRORS, DUPLICATES,
             ]),

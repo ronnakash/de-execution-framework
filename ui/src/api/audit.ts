@@ -4,6 +4,7 @@ export interface DailyAudit {
   tenant_id: string;
   date: string;
   event_type: string;
+  source: string;
   received_count: number;
   processed_count: number;
   error_count: number;
@@ -16,6 +17,15 @@ export interface AuditSummary {
   total_errors: number;
   total_duplicates: number;
   by_event_type: Record<
+    string,
+    {
+      received: number;
+      processed: number;
+      errors: number;
+      duplicates: number;
+    }
+  >;
+  by_source: Record<
     string,
     {
       received: number;
@@ -43,6 +53,7 @@ interface DailyParams {
   date?: string;
   start_date?: string;
   end_date?: string;
+  source?: string;
 }
 
 export function fetchDailyAudit(params: DailyParams = {}) {
@@ -51,6 +62,7 @@ export function fetchDailyAudit(params: DailyParams = {}) {
   if (params.date) qs.set("date", params.date);
   if (params.start_date) qs.set("start_date", params.start_date);
   if (params.end_date) qs.set("end_date", params.end_date);
+  if (params.source) qs.set("source", params.source);
   const query = qs.toString();
   return fetchApi<DailyAudit[]>(
     `/api/v1/audit/daily${query ? `?${query}` : ""}`,

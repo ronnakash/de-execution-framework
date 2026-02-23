@@ -29,13 +29,12 @@ from aiohttp import web
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import Module
 from de_platform.pipeline.topics import (
+    AUDIT_COUNTS,
     DUPLICATES,
     EXECUTIONS_PERSISTENCE,
     NORMALIZATION_ERRORS,
     ORDERS_PERSISTENCE,
-    TRADE_NORMALIZATION,
     TRANSACTIONS_PERSISTENCE,
-    TX_NORMALIZATION,
 )
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
@@ -52,9 +51,8 @@ _ERROR = "error_count"
 _DUPLICATE = "duplicate_count"
 
 # Topic → (counter field, default event_type or None to read from message)
+# Received counts now come from AUDIT_COUNTS topic (handled separately)
 _TOPIC_MAPPING: list[tuple[str, str, str | None]] = [
-    (TRADE_NORMALIZATION, _RECEIVED, None),          # event_type from msg
-    (TX_NORMALIZATION, _RECEIVED, "transaction"),
     (ORDERS_PERSISTENCE, _PROCESSED, "order"),
     (EXECUTIONS_PERSISTENCE, _PROCESSED, "execution"),
     (TRANSACTIONS_PERSISTENCE, _PROCESSED, "transaction"),
@@ -76,19 +74,20 @@ def _dumps(obj: object) -> str:
 
 
 def _extract_date(msg: dict) -> str:
-    """Extract date string (YYYY-MM-DD) from message transact_time or today."""
-    tt = msg.get("transact_time")
-    if tt:
-        try:
-            if isinstance(tt, str):
-                dt = datetime.fromisoformat(tt)
-            elif isinstance(tt, datetime):
-                dt = tt
-            else:
-                return date.today().isoformat()
-            return dt.date().isoformat()
-        except (ValueError, TypeError):
-            pass
+    """Extract date string (YYYY-MM-DD) from message transact_time/timestamp or today."""
+    for field in ("transact_time", "timestamp"):
+        tt = msg.get(field)
+        if tt:
+            try:
+                if isinstance(tt, str):
+                    dt = datetime.fromisoformat(tt)
+                elif isinstance(tt, datetime):
+                    dt = tt
+                else:
+                    continue
+                return dt.date().isoformat()
+            except (ValueError, TypeError):
+                continue
     return date.today().isoformat()
 
 
@@ -114,8 +113,8 @@ class DataAuditModule(Module):
         self.secrets = secrets
         self._runner: web.AppRunner | None = None
 
-        # In-memory counters: (tenant_id, date_str, event_type) → {field: count}
-        self._counters: dict[tuple[str, str, str], dict[str, int]] = {}
+        # In-memory counters: (tenant_id, date_str, event_type, source) → {field: count}
+        self._counters: dict[tuple[str, str, str, str], dict[str, int]] = {}
         self._msg_count_since_flush = 0
         self._last_flush_time = 0.0
 
@@ -156,11 +155,40 @@ class DataAuditModule(Module):
     # ── Kafka consumer ────────────────────────────────────────────────────
 
     def _consume_all_topics(self) -> None:
-        """Poll one message from each topic per iteration."""
+        """Drain all available messages from each topic per iteration."""
+        self._drain_audit_counts()
         for topic, counter_field, default_event_type in _TOPIC_MAPPING:
-            msg = self.mq.consume_one(topic)
-            if msg:
+            while True:
+                msg = self.mq.consume_one(topic)
+                if not msg:
+                    break
                 self._count_message(msg, counter_field, default_event_type)
+
+    def _drain_audit_counts(self) -> None:
+        """Drain all available messages from audit_counts topic."""
+        while True:
+            msg = self.mq.consume_one(AUDIT_COUNTS)
+            if not msg:
+                break
+            tenant_id = msg.get("tenant_id", "unknown")
+            source = msg.get("source", "unknown")
+            event_type = msg.get("event_type", "unknown")
+            received = msg.get("received", 0)
+            date_str = _extract_date(msg)
+
+            key = (tenant_id, date_str, event_type, source)
+            if key not in self._counters:
+                self._counters[key] = {
+                    _RECEIVED: 0, _PROCESSED: 0, _ERROR: 0, _DUPLICATE: 0,
+                }
+            self._counters[key][_RECEIVED] += received
+            self._msg_count_since_flush += 1
+
+            self.metrics.counter("audit_events_counted_total", tags={
+                "service": "data_audit", "tenant_id": tenant_id,
+                "event_type": event_type, "counter": _RECEIVED,
+                "source": source,
+            })
 
     def _count_message(
         self, msg: dict, counter_field: str, default_event_type: str | None,
@@ -169,8 +197,9 @@ class DataAuditModule(Module):
         tenant_id = msg.get("tenant_id", "unknown")
         event_type = default_event_type or msg.get("event_type", "unknown")
         date_str = _extract_date(msg)
+        source = msg.get("source", "unknown")
 
-        key = (tenant_id, date_str, event_type)
+        key = (tenant_id, date_str, event_type, source)
         if key not in self._counters:
             self._counters[key] = {
                 _RECEIVED: 0, _PROCESSED: 0, _ERROR: 0, _DUPLICATE: 0,
@@ -181,6 +210,7 @@ class DataAuditModule(Module):
         self.metrics.counter("audit_events_counted_total", tags={
             "service": "data_audit", "tenant_id": tenant_id,
             "event_type": event_type, "counter": counter_field,
+            "source": source,
         })
 
     # ── Flush logic ───────────────────────────────────────────────────────
@@ -205,24 +235,28 @@ class DataAuditModule(Module):
         self._msg_count_since_flush = 0
         self._last_flush_time = time.monotonic()
 
-        for (tenant_id, date_str, event_type), counts in snapshot.items():
-            # Fetch existing row (MemoryDB compatible: fetch_all + filter)
-            rows = await self.db.fetch_all_async("SELECT * FROM daily_audit")
-            existing = None
-            for row in rows:
-                row_date = row.get("date")
-                if isinstance(row_date, date):
-                    row_date = row_date.isoformat()
-                if (
-                    row.get("tenant_id") == tenant_id
-                    and row_date == date_str
-                    and row.get("event_type") == event_type
-                ):
-                    existing = row
-                    break
+        # Fetch all existing rows ONCE (not per key)
+        all_rows = await self.db.fetch_all_async("SELECT * FROM daily_audit")
+
+        # Build lookup: (tenant_id, date_str, event_type, source) -> row
+        existing_lookup: dict[tuple[str, str, str, str], dict] = {}
+        for row in all_rows:
+            row_date = row.get("date")
+            if isinstance(row_date, date):
+                row_date = row_date.isoformat()
+            row_key = (
+                row.get("tenant_id", ""),
+                str(row_date),
+                row.get("event_type", ""),
+                row.get("source", "unknown"),
+            )
+            existing_lookup[row_key] = row
+
+        for key, counts in snapshot.items():
+            tenant_id, date_str, event_type, source = key
+            existing = existing_lookup.get(key)
 
             if existing:
-                # Update: delete + re-insert (MemoryDB compatible)
                 merged = dict(existing)
                 merged[_RECEIVED] = merged.get(_RECEIVED, 0) + counts[_RECEIVED]
                 merged[_PROCESSED] = merged.get(_PROCESSED, 0) + counts[_PROCESSED]
@@ -239,6 +273,7 @@ class DataAuditModule(Module):
                     "tenant_id": tenant_id,
                     "date": date.fromisoformat(date_str),
                     "event_type": event_type,
+                    "source": source,
                     _RECEIVED: counts[_RECEIVED],
                     _PROCESSED: counts[_PROCESSED],
                     _ERROR: counts[_ERROR],
@@ -275,11 +310,15 @@ class DataAuditModule(Module):
         date_param = request.rel_url.query.get("date")
         start_date = request.rel_url.query.get("start_date")
         end_date = request.rel_url.query.get("end_date")
+        source = request.rel_url.query.get("source")
 
         rows = await self.db.fetch_all_async("SELECT * FROM daily_audit")
 
         if tenant_id:
             rows = [r for r in rows if r.get("tenant_id") == tenant_id]
+
+        if source:
+            rows = [r for r in rows if r.get("source") == source]
 
         if date_param:
             rows = [r for r in rows if _date_matches(r.get("date"), date_param)]
@@ -308,6 +347,7 @@ class DataAuditModule(Module):
             "total_errors": 0,
             "total_duplicates": 0,
             "by_event_type": {},
+            "by_source": {},
         }
 
         for row in rows:
@@ -325,6 +365,16 @@ class DataAuditModule(Module):
             summary["by_event_type"][et]["processed"] += row.get(_PROCESSED, 0)
             summary["by_event_type"][et]["errors"] += row.get(_ERROR, 0)
             summary["by_event_type"][et]["duplicates"] += row.get(_DUPLICATE, 0)
+
+            src = row.get("source", "unknown")
+            if src not in summary["by_source"]:
+                summary["by_source"][src] = {
+                    "received": 0, "processed": 0, "errors": 0, "duplicates": 0,
+                }
+            summary["by_source"][src]["received"] += row.get(_RECEIVED, 0)
+            summary["by_source"][src]["processed"] += row.get(_PROCESSED, 0)
+            summary["by_source"][src]["errors"] += row.get(_ERROR, 0)
+            summary["by_source"][src]["duplicates"] += row.get(_DUPLICATE, 0)
 
         return web.json_response(dumps=_dumps, data=summary)
 

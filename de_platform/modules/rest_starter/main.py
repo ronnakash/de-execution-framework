@@ -31,6 +31,7 @@ from aiohttp import web
 
 from de_platform.config.context import ModuleConfig
 from de_platform.modules.base import Module
+from de_platform.pipeline.audit_accumulator import AuditAccumulator
 from de_platform.pipeline.serialization import dto_to_message, error_to_dict
 from de_platform.pipeline.topics import (
     NORMALIZATION_ERRORS,
@@ -73,6 +74,7 @@ class RestStarterModule(Module):
     async def initialize(self) -> None:
         self.log = self.logger.create()
         self.port = self.config.get("port", 8001)
+        self._audit = AuditAccumulator(self.mq, source="rest")
 
     async def execute(self) -> int:
         app = web.Application()
@@ -88,6 +90,7 @@ class RestStarterModule(Module):
 
         self.log.info("REST Starter listening", module="rest_starter", port=self.port)
         self.lifecycle.on_shutdown(self._stop_server)
+        self.lifecycle.on_shutdown(self._flush_audit)
 
         while not self.lifecycle.is_shutting_down:
             await asyncio.sleep(0.1)
@@ -96,6 +99,9 @@ class RestStarterModule(Module):
 
     async def teardown(self) -> None:
         await self._stop_server()
+
+    async def _flush_audit(self) -> None:
+        self._audit.flush()
 
     async def _stop_server(self) -> None:
         if self._runner:
@@ -151,6 +157,16 @@ class RestStarterModule(Module):
 
         # Deduplicate error indices for response
         rejected_indices = {e.event_index for e in errors}
+
+        # Count valid events for audit
+        if valid:
+            tenant_counts: dict[str, int] = {}
+            for raw in valid:
+                tid = raw.get("tenant_id", "unknown")
+                tenant_counts[tid] = tenant_counts.get(tid, 0) + 1
+            for tid, count in tenant_counts.items():
+                self._audit.count(tid, event_type, count)
+            self._audit.maybe_flush()
 
         self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "rest_starter", "event_type": event_type, "method": "rest"})
         if rejected_indices:

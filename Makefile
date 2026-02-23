@@ -19,7 +19,10 @@ test-e2e-ui:
 	$(PYTEST) tests/e2e_ui/ -v -m e2e_ui --tb=short
 
 test-all:
-	$(PYTEST) -v --tb=short -n auto
+	$(MAKE) test-unit
+	$(MAKE) test-integration
+	$(MAKE) test-e2e
+	$(MAKE) test-e2e-ui
 
 lint:
 	$(PYTHON) -m ruff check de_platform/

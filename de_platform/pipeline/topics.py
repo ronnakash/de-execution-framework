@@ -19,3 +19,6 @@ TRANSACTIONS_ALGOS = "transactions_algos"
 
 # ── Downstream topics ─────────────────────────────────────────────────────────
 ALERTS = "alerts"                     # producer: Algos, consumer: Data API
+
+# ── Audit topics ─────────────────────────────────────────────────────────────
+AUDIT_COUNTS = "audit_counts"                # per-source ingestion counts
