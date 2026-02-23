@@ -109,37 +109,38 @@ class AlertManagerModule(Module):
     # ── Kafka consumer ────────────────────────────────────────────────────
 
     async def _consume_and_process(self) -> None:
-        msg = self.mq.consume_one(ALERTS)
-        if not msg:
-            return
+        while True:
+            msg = self.mq.consume_one(ALERTS)
+            if not msg:
+                return
 
-        alert_id = msg.get("alert_id", "")
-        algorithm = msg.get("algorithm", "")
-        event_id = msg.get("event_id", "")
-        tenant_id = msg.get("tenant_id", "")
-        dedup_key = (algorithm, event_id)
+            alert_id = msg.get("alert_id", "")
+            algorithm = msg.get("algorithm", "")
+            event_id = msg.get("event_id", "")
+            tenant_id = msg.get("tenant_id", "")
+            dedup_key = (algorithm, event_id)
 
-        if dedup_key in self._known_alerts:
-            self.log.debug("Alert deduplicated", alert_id=alert_id,
-                           algorithm=algorithm, event_id=event_id)
-            self.metrics.counter("alerts_deduplicated_total", tags={
+            if dedup_key in self._known_alerts:
+                self.log.debug("Alert deduplicated", alert_id=alert_id,
+                               algorithm=algorithm, event_id=event_id)
+                self.metrics.counter("alerts_deduplicated_total", tags={
+                    "service": "alert_manager", "tenant_id": tenant_id,
+                })
+                continue
+
+            db_row = self._prepare_db_row(msg)
+            await self.db.insert_one_async("alerts", db_row)
+            self._known_alerts.add(dedup_key)
+
+            self.metrics.counter("alerts_persisted_total", tags={
                 "service": "alert_manager", "tenant_id": tenant_id,
+                "algorithm": algorithm, "severity": msg.get("severity", ""),
             })
-            return
 
-        db_row = self._prepare_db_row(msg)
-        await self.db.insert_one_async("alerts", db_row)
-        self._known_alerts.add(dedup_key)
+            await self._aggregate_into_case(msg)
 
-        self.metrics.counter("alerts_persisted_total", tags={
-            "service": "alert_manager", "tenant_id": tenant_id,
-            "algorithm": algorithm, "severity": msg.get("severity", ""),
-        })
-
-        await self._aggregate_into_case(msg)
-
-        self.log.info("Alert processed", alert_id=alert_id,
-                      tenant_id=tenant_id, algorithm=algorithm)
+            self.log.info("Alert processed", alert_id=alert_id,
+                          tenant_id=tenant_id, algorithm=algorithm)
 
     async def _load_dedup_set(self) -> None:
         self._known_alerts = set()
@@ -178,22 +179,32 @@ class AlertManagerModule(Module):
     async def _find_matching_case(
         self, tenant_id: str, algorithm: str, event_id: str,
     ) -> dict | None:
-        all_cases = await self.db.fetch_all_async("SELECT * FROM cases")
-        open_cases = [
-            c for c in all_cases
-            if c.get("tenant_id") == tenant_id and c.get("status") == "open"
-        ]
+        all_cases = await self.db.fetch_all_async(
+            "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id],
+        )
+        open_cases = [c for c in all_cases if c.get("status") == "open"]
         if not open_cases:
             return None
 
+        # Collect case_ids to narrow subsequent lookups
+        case_ids = {c["case_id"] for c in open_cases}
+
         # Rule 2: same event_id in case alerts (cross-algorithm grouping)
         all_case_alerts = await self.db.fetch_all_async("SELECT * FROM case_alerts")
-        all_alerts = await self.db.fetch_all_async("SELECT * FROM alerts")
-        alert_by_id = {a.get("alert_id"): a for a in all_alerts}
+        matching_case_alerts = [
+            r for r in all_case_alerts if r.get("case_id") in case_ids
+        ]
+        alert_ids_needed = {r["alert_id"] for r in matching_case_alerts}
+        all_alerts = await self.db.fetch_all_async(
+            "SELECT * FROM alerts WHERE tenant_id = $1", [tenant_id],
+        )
+        alert_by_id = {
+            a["alert_id"]: a for a in all_alerts if a["alert_id"] in alert_ids_needed
+        }
 
         for case in open_cases:
             case_alert_ids = {
-                r["alert_id"] for r in all_case_alerts
+                r["alert_id"] for r in matching_case_alerts
                 if r.get("case_id") == case["case_id"]
             }
             for aid in case_alert_ids:

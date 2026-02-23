@@ -860,18 +860,20 @@ class RealInfraHarness:
         else:
             raise ValueError(f"Unknown method: {method!r}")
 
+    def _ch_fetch_tenant(self, table: str) -> list[dict]:
+        """Fetch rows from ClickHouse filtered by this harness's tenant_id."""
+        ch = self._pipeline._clickhouse_db
+        query = f"SELECT * FROM {table} WHERE tenant_id = {{p1:String}}"
+        return ch.fetch_all(query, [self.tenant_id])
+
     async def wait_for_rows(
         self, table: str, expected: int, timeout: float = 60.0
     ) -> list[dict]:
-        ch = self._pipeline._clickhouse_db
-
         def _check() -> bool:
-            rows = ch.fetch_all(f"SELECT * FROM {table}")
-            return len(self._filter_by_tenant(rows)) >= expected
+            return len(self._ch_fetch_tenant(table)) >= expected
 
         def _on_timeout() -> str:
-            rows = ch.fetch_all(f"SELECT * FROM {table}")
-            filtered = self._filter_by_tenant(rows)
+            filtered = self._ch_fetch_tenant(table)
             return (
                 f"wait_for_rows('{table}', expected={expected}) "
                 f"timed out after {timeout}s (got {len(filtered)} "
@@ -879,17 +881,13 @@ class RealInfraHarness:
             )
 
         await poll_until(_check, timeout=timeout, on_timeout=_on_timeout)
-        return self._filter_by_tenant(
-            ch.fetch_all(f"SELECT * FROM {table}")
-        )
+        return self._ch_fetch_tenant(table)
 
     async def wait_for_no_new_rows(
         self, table: str, known: int, timeout: float = 5.0
     ) -> None:
         await asyncio.sleep(timeout)
-        rows = self._filter_by_tenant(
-            self._pipeline._clickhouse_db.fetch_all(f"SELECT * FROM {table}")
-        )
+        rows = self._ch_fetch_tenant(table)
         if len(rows) != known:
             raise AssertionError(
                 f"Expected {known} rows in {table} to remain unchanged, "

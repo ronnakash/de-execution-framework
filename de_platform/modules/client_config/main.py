@@ -305,6 +305,9 @@ class ClientConfigModule(Module):
                 content_type="application/json",
             )
         rows = await self._find_algo_configs(tenant_id)
+        for row in rows:
+            if isinstance(row.get("thresholds"), str):
+                row["thresholds"] = json.loads(row["thresholds"])
         return web.json_response(dumps=_dumps, data=rows)
 
     async def _update_algo(self, request: web.Request) -> web.Response:

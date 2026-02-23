@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from uuid import uuid4
 
 import bcrypt
 import jwt
@@ -98,6 +99,7 @@ def encode_token(
         "role": role,
         "iat": now,
         "exp": now + expires_in,
+        "jti": uuid4().hex,
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 

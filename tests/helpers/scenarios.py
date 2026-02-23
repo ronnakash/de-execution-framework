@@ -227,6 +227,18 @@ async def scenario_velocity(harness: PipelineHarness) -> None:
             "window_size_minutes": 5,
             "window_slide_minutes": 1,
         })
+    elif hasattr(harness, "call_service"):
+        # E2E: create tenant via client_config API so Redis gets the config
+        await harness.call_service(
+            "client_config", "POST", "/api/v1/clients",
+            json={
+                "tenant_id": tenant_id,
+                "display_name": f"Velocity Test {tenant_id}",
+                "mode": "realtime",
+                "window_size_minutes": 5,
+                "window_slide_minutes": 1,
+            },
+        )
 
     from datetime import datetime, timedelta
 

@@ -140,7 +140,7 @@ async def test_trigger_manual_run(harness):
             "name": "Manual Run Test",
             "module_name": "hello_world",
             "default_args": {},
-            "enabled": False,
+            "enabled": True,
         },
     )
 
@@ -162,7 +162,7 @@ async def test_get_run_details(harness):
             "name": "Run Details Test",
             "module_name": "hello_world",
             "default_args": {},
-            "enabled": False,
+            "enabled": True,
         },
     )
 

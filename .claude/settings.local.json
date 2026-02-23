@@ -16,7 +16,10 @@
       "Bash(test:*)",
       "Bash(make lint:*)",
       "Bash(make test:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(docker restart:*)",
+      "Bash(pkill:*)"
     ]
   }
 }
