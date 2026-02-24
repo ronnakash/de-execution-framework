@@ -31,6 +31,9 @@ however, I see that we have the count changes already present in phase 1, why is
 
 15. ui improvements. I think i need to download skills for it. never dont it, please instruct me on how to do it
 16. stress testing and benchmarking framework on real infra. supports one or multiple tenants sending data at the same time with varying data scales
+17. e2e ui tests should also test viewer tenant views. It should create a user for the tenant and then delete it
+<!-- 18. e2e test should have a cleanup and delete data associated with the test like users, configurations, alerts, ect (ignore for now) -->
+18. remove images from e2e test steps that don't interact with the ui by inserting data and creating users ect
 
 
 Data Audit Redesign:
