@@ -160,7 +160,6 @@ class StepLogger:
             # Capture UI screenshot if a Playwright page is available
             if self._page is not None:
                 try:
-                    self._page.reload(wait_until="networkidle", timeout=5000)
                     screenshot_bytes = self._page.screenshot(
                         type="jpeg", quality=80, full_page=True,
                     )
@@ -172,12 +171,48 @@ class StepLogger:
 
             self._steps.append(record)
 
+    def _capture_deferred_screenshot(self) -> None:
+        """Capture a screenshot for the most recent step (deferred).
+
+        When ``log()`` is called for step N+1, the page shows the result of
+        step N's actions.  This method attaches the current page state to the
+        *previous* step, giving accurate post-action screenshots.
+        """
+        if self._page is None or not self._steps:
+            return
+        last = self._steps[-1]
+        if last.screenshot is not None:
+            return
+        try:
+            screenshot_bytes = self._page.screenshot(
+                type="jpeg", quality=80, full_page=True,
+            )
+            last.screenshot = base64.b64encode(screenshot_bytes).decode("ascii")
+        except Exception:
+            pass  # Never fail the test due to screenshots
+
     def log(self, name: str, description: str = "") -> None:
-        """Record a simple step without snapshots (sync-friendly)."""
+        """Record a simple step without snapshots (sync-friendly).
+
+        Screenshots are *deferred*: calling ``log()`` captures a screenshot
+        for the **previous** step (the page now shows its result).  Call
+        ``finalize()`` after the last step to capture its screenshot.
+        """
+        # Capture screenshot for the PREVIOUS step (page now shows its result)
+        self._capture_deferred_screenshot()
+
         record = StepRecord(name=name, description=description)
         record.start_time = time.time()
         record.end_time = record.start_time
         self._steps.append(record)
+
+    def finalize(self) -> None:
+        """Capture a screenshot for the very last step.
+
+        Must be called after the final ``log()`` action has been performed
+        (typically in fixture teardown via ``yield``).
+        """
+        self._capture_deferred_screenshot()
 
     @property
     def steps(self) -> list[StepRecord]:
