@@ -349,13 +349,18 @@ def shared_pipeline(request, infra, tmp_path_factory):
 # ── Per-test Kafka isolation ─────────────────────────────────────────────────
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _screenshot_browser(shared_pipeline):
     """Launch a headless Chromium browser for UI screenshots in E2E tests.
 
     Stores the browser on shared_pipeline._screenshot_browser so that
     RealInfraHarness can create per-test pages.  Gracefully degrades to
     None if Playwright is not installed or the browser fails to launch.
+
+    NOT autouse — Playwright's ``sync_playwright().start()`` keeps an event
+    loop running in the main thread, which prevents pytest-asyncio's
+    ``asyncio.Runner.run()`` from working.  Only activate this fixture in
+    tests/fixtures that explicitly request it.
     """
     if shared_pipeline is None:
         yield
