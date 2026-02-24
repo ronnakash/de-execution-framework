@@ -1,15 +1,2 @@
-1. we need to wrap database interactions with observability. Ideally, we can identify each call based on what line of service/module code interacts with it and have 50 95 and 99 percentile mentrics
-2. kafka messages in the data pipeline (up to including persistence and algos) shoud be keyd by the client and symbol to maintain order when consuming messages. These messages should also be processed sequentially and not concurrently or paralelly
-3. I see that redis keys are an issue when running test, why? the key should contain the tenant and event ids which should always be generated uniquely
-4. All fraud detection algorithm implementations must be pure in-memory computations. No external service calls (Redis, DB, HTTP) inside evaluate_window(). All data the algo needs must come from the events list and the thresholds dict passed in. This keeps algos fast (no I/O latency), trivially testable (no mocks needed), and parallelizable in the future. The sliding window engine manages the buffer and config lookups; algos just receive data and return alerts.
-5. we need an alert management service that reads them from kafka and inserts them to postgres. It should also have some alert aggregation mechanims that aggregates alerts into cases that are also displayed in the UI. we need to plan a design for it and define the logic well
-6. we need to improve the way data audit works. we need to collect incoming messages per way to send data.
-7. we need to improve the tests report to have the ability to click on a single test and see all of the important thing about it. We should have some form of dedicated logger that shows the important things about the test and the results in each step and also have a general explanation of each step
-8. we need to be able to up all of the system in individual docker containers. Let's think about how to do that. I think the main idea should be to build one docker image of the whole project and invoke a single service at a time with the command line args. We need a dedicated separate design for it
-9. ui tables should support sorting and pagination (of course that would require backend work to support). I think we should move away from HTTP GET for these endpoints and have some framework to use POST requests and have shared logic to get json request bodies and turn them into query filters and support pagination and sorting
-10. data audit data is a mess, debug
-11. when searhing events in the UI for all client as admin user it shows nothing, and when doing so with a specific tenant filtered I now see their data
-12. i dont see any alerts or cases
-
-
-
+     /plugin marketplace add anthropics/claude-code
+     /plugin install frontend-design@claude-code-plugins
