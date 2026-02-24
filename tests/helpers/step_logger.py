@@ -8,6 +8,7 @@ per-test drill-down.
 
 from __future__ import annotations
 
+import base64
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -31,15 +32,19 @@ class StepRecord:
     snapshot_after: dict | None = None
     delta: dict | None = None
     error: str | None = None
+    screenshot: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "description": self.description,
             "duration_seconds": round(self.duration_seconds, 3),
             "delta": self.delta,
             "error": self.error,
         }
+        if self.screenshot:
+            d["screenshot"] = self.screenshot
+        return d
 
 
 # ── Snapshot conversion ──────────────────────────────────────────────────────
@@ -104,8 +109,13 @@ def _compute_step_delta(before: dict, after: dict) -> dict:
 class StepLogger:
     """Records named steps within a test for report drill-down."""
 
-    def __init__(self, diagnostics: TestDiagnostics | None = None) -> None:
+    def __init__(
+        self,
+        diagnostics: TestDiagnostics | None = None,
+        page: Any = None,
+    ) -> None:
         self._diagnostics = diagnostics
+        self._page = page
         self._steps: list[StepRecord] = []
 
     @asynccontextmanager
@@ -146,6 +156,19 @@ class StepLogger:
                 record.delta = _compute_step_delta(
                     record.snapshot_before, record.snapshot_after
                 )
+
+            # Capture UI screenshot if a Playwright page is available
+            if self._page is not None:
+                try:
+                    self._page.reload(wait_until="networkidle", timeout=5000)
+                    screenshot_bytes = self._page.screenshot(
+                        type="jpeg", quality=80, full_page=True,
+                    )
+                    record.screenshot = base64.b64encode(
+                        screenshot_bytes
+                    ).decode("ascii")
+                except Exception:
+                    pass  # Never fail the test due to screenshots
 
             self._steps.append(record)
 

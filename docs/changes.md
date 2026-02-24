@@ -24,6 +24,27 @@ Data Audit Redesign:
 12. separate the calculations for files and "realtime" methods (kafka and rest)
 13. we have separate tenants for each e2e test. the main reason is to simulate test isolation. I think this is a bad approach with a lot of downsides. I think I have a solution that also makes a lot of business sense - all of our events have (or should have) a client_id which represents the actual user of the tenant that is doint the trade/transaction. Algos should take that field into account and we should use that field in order to create test isolation by using it to separate alert generations and filter alets/cases/events by their client id as well as the tenant
 14. kafka starter service should have topics to read/write back to the client for each client in the system. We should have that configured in the client config service.
+15. test harnesses should not have all the methods to interact with databases, kafka, ingestions ect. We should keep the harnesses to just creating and managing the construction of the pipeline itself for runs. There should be some other class that contains all of these methods and is constructed with a harness to take the stuff it needs from. it should be implemented in such a way that logic for all the harness types is shared. This is just my opinion, we should discuss what we should do further
+16. alerts should have a list of event ids. We need to use the event ids in the relavant e2e tests to make sure that alerts/cases created are really the ones that should have been created by the specific e2e test
+17. I have this result of a test run Step 1: Ingest multi-error events
+0.024s
+Publish 10 execution events via kafka, each with 2+ validation errors
+
+DB Table	Rows
+clickhouse.normalization_errors	+1 rows
+Step 2: Verify error consolidation
+0.696s
+Check exactly 10 error rows (1 per event), each with errors list >= 2 entries
+
+DB Table	Rows
+clickhouse.normalization_errors	+9 rows
+Step 3: Verify no valid rows
+0.022s
+Confirm executions table is empty (all events had validation errors)
+I think our logic is ok. The 10 events with 2 errors should produce 0 valid results and 10 error events published to kafka errors topic and persisted to the errors table in clickhouse. Each error event should have the list of 2 errors. this is all happening.
+however, I see that we have the count changes already present in phase 1, why is it relavent? we should only have it in phase 2 and in phase 2 only show the +10. This logic of having only things relavant to the step should apply to the other tests
+
+18 ui improvements. I think i need to download skills for it. never dont it, please instruct me on how to do it
 
 
 

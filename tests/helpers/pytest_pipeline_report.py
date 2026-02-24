@@ -458,6 +458,15 @@ def _render_steps_html(steps: list[dict]) -> str:
                 parts.append(f"<tr><td>{_html_escape(metric)}</td><td>{sign}{val}</td></tr>")
             parts.append("</table>")
 
+        # Screenshot
+        if step.get("screenshot"):
+            parts.append(
+                '<details class="step-screenshot">'
+                '<summary>Screenshot</summary>'
+                f'<img src="data:image/jpeg;base64,{step["screenshot"]}" />'
+                '</details>'
+            )
+
         # Error box
         if error:
             parts.append(
@@ -621,6 +630,11 @@ td {{ padding: 0.75rem 1rem; border-bottom: 1px solid #e5e7eb; }}
 .snapshot h4 {{ margin: 0 0 0.5rem 0; color: #374151; font-size: 0.9rem; }}
 .snapshot pre {{ background: #f9fafb; padding: 0.75rem; border-radius: 6px; font-size: 0.8rem;
                overflow-x: auto; margin: 0; }}
+
+/* Step screenshots */
+.step-screenshot {{ margin: 0.5rem 0; }}
+.step-screenshot summary {{ cursor: pointer; color: #3b82f6; font-size: 0.85rem; font-weight: 600; }}
+.step-screenshot img {{ max-width: 100%; border-radius: 6px; border: 1px solid #e5e7eb; margin-top: 0.5rem; }}
 </style>
 </head>
 <body>

@@ -823,6 +823,7 @@ class RealInfraHarness:
         self._pipeline = pipeline
         self.tenant_id: str = f"INTEGRATION_CLIENT_{uuid.uuid4().hex[:12]}"
         self._alerts_db: Any = None
+        self._screenshot_page: Any = None
         self.diagnostics: TestDiagnostics | None = None
         self.step_logger: StepLogger = StepLogger()
 
@@ -840,14 +841,52 @@ class RealInfraHarness:
         self._alerts_db = alerts_db
 
         self.diagnostics = TestDiagnostics(
-            kafka_bootstrap=self._pipeline._bootstrap_servers,
             clickhouse_db=self._pipeline._clickhouse_db,
             postgres_db=self._alerts_db,
+            tenant_id=self.tenant_id,
         )
-        self.step_logger = StepLogger(diagnostics=self.diagnostics)
+
+        # Set up Playwright page for UI screenshots (if browser available)
+        page = None
+        browser = getattr(self._pipeline, "_screenshot_browser", None)
+        if browser is not None:
+            try:
+                from de_platform.pipeline.auth_middleware import encode_token
+
+                page = browser.new_page(viewport={"width": 1280, "height": 720})
+                token = encode_token(
+                    user_id="e2e_admin",
+                    tenant_id=self.tenant_id,
+                    role="admin",
+                    secret=self._pipeline.JWT_SECRET,
+                )
+                ui_url = f"http://127.0.0.1:{self._pipeline.api_port}/ui"
+                page.goto(ui_url, wait_until="networkidle", timeout=10000)
+                page.evaluate(
+                    f"localStorage.setItem('access_token', '{token}')"
+                )
+                page.reload(wait_until="networkidle", timeout=10000)
+                self._screenshot_page = page
+            except Exception:
+                if page is not None:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                self._screenshot_page = None
+
+        self.step_logger = StepLogger(
+            diagnostics=self.diagnostics, page=self._screenshot_page,
+        )
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        if self._screenshot_page is not None:
+            try:
+                self._screenshot_page.close()
+            except Exception:
+                pass
+            self._screenshot_page = None
         if self._alerts_db:
             await self._alerts_db.disconnect_async()
 

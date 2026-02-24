@@ -64,7 +64,6 @@ class TestDiagnostics:
     def __init__(
         self,
         *,
-        kafka_bootstrap: str | None = None,
         clickhouse_db: Any | None = None,
         postgres_db: Any | None = None,
         memory_metrics: Any | None = None,
@@ -73,8 +72,8 @@ class TestDiagnostics:
         tasks: list[asyncio.Task] | None = None,
         task_names: list[str] | None = None,
         memory_queue: Any | None = None,
+        tenant_id: str | None = None,
     ) -> None:
-        self._kafka_bootstrap = kafka_bootstrap
         self._clickhouse_db = clickhouse_db
         self._postgres_db = postgres_db
         self._memory_metrics = memory_metrics
@@ -83,16 +82,16 @@ class TestDiagnostics:
         self._tasks = tasks or []
         self._task_names = task_names or []
         self._memory_queue = memory_queue
+        self._tenant_id = tenant_id
 
     def snapshot(self) -> PipelineSnapshot:
         """Take a point-in-time snapshot of all pipeline state."""
         snap = PipelineSnapshot(timestamp=time.time())
 
-        # Kafka / message queue state
+        # In-memory message queue state (accurate per-test; real Kafka
+        # watermarks are global and cannot be tenant-scoped, so we skip them)
         if self._memory_queue is not None:
             snap.kafka_topics = self._memory_queue_state()
-        elif self._kafka_bootstrap:
-            snap.kafka_topics = self._kafka_watermarks()
 
         # DB row counts
         snap.db_tables = self._db_row_counts()
@@ -124,47 +123,15 @@ class TestDiagnostics:
                 )
         return result
 
-    def _kafka_watermarks(self) -> dict[str, TopicState]:
-        """Query Kafka topic watermarks via AdminClient."""
-        try:
-            from confluent_kafka.admin import AdminClient
-
-            admin = AdminClient({"bootstrap.servers": self._kafka_bootstrap})
-            metadata = admin.list_topics(timeout=5)
-
-            result: dict[str, TopicState] = {}
-            for topic_name in metadata.topics:
-                if topic_name.startswith("_"):
-                    continue
-                # Get watermarks for partition 0
-                try:
-                    from confluent_kafka import Consumer
-
-                    c = Consumer({
-                        "bootstrap.servers": self._kafka_bootstrap,
-                        "group.id": "__diagnostics__",
-                        "enable.auto.commit": "false",
-                    })
-                    from confluent_kafka import TopicPartition
-
-                    tp = TopicPartition(topic_name, 0)
-                    low, high = c.get_watermark_offsets(tp, timeout=2)
-                    result[topic_name] = TopicState(
-                        high_watermark=high, low_watermark=low
-                    )
-                    c.close()
-                except Exception:
-                    result[topic_name] = TopicState(
-                        high_watermark=-1, low_watermark=-1
-                    )
-            return result
-        except Exception:
-            return {}
-
     # ── Database ─────────────────────────────────────────────────────────
 
     def _db_row_counts(self) -> dict[str, int]:
-        """Query row counts from databases."""
+        """Query row counts from databases.
+
+        When ``tenant_id`` is set, counts are scoped to that tenant only,
+        giving accurate per-test deltas.  Otherwise, sentinel events
+        (from consumer readiness checks) are excluded.
+        """
         counts: dict[str, int] = {}
 
         tables = [
@@ -179,19 +146,35 @@ class TestDiagnostics:
         if self._clickhouse_db is not None:
             for table in tables[:5]:  # event tables in ClickHouse
                 try:
-                    rows = self._clickhouse_db.fetch_all(
-                        f"SELECT * FROM {table}"
-                    )
-                    counts[f"clickhouse.{table}"] = len(rows)
+                    if self._tenant_id:
+                        rows = self._clickhouse_db.fetch_all(
+                            f"SELECT count(*) as cnt FROM {table}"
+                            " WHERE tenant_id = {p1:String}",
+                            [self._tenant_id],
+                        )
+                    else:
+                        rows = self._clickhouse_db.fetch_all(
+                            f"SELECT count(*) as cnt FROM {table}"
+                            " WHERE tenant_id != {p1:String}",
+                            ["PIPELINE_SENTINEL"],
+                        )
+                    counts[f"clickhouse.{table}"] = rows[0]["cnt"] if rows else 0
                 except Exception:
                     counts[f"clickhouse.{table}"] = -1
 
         if self._postgres_db is not None:
             try:
-                rows = self._postgres_db.fetch_all(
-                    "SELECT * FROM alerts"
-                )
-                counts["postgres.alerts"] = len(rows)
+                if self._tenant_id:
+                    rows = self._postgres_db.fetch_all(
+                        "SELECT count(*) as cnt FROM alerts WHERE tenant_id = $1",
+                        [self._tenant_id],
+                    )
+                else:
+                    rows = self._postgres_db.fetch_all(
+                        "SELECT count(*) as cnt FROM alerts WHERE tenant_id != $1",
+                        ["PIPELINE_SENTINEL"],
+                    )
+                counts["postgres.alerts"] = rows[0]["cnt"] if rows else 0
             except Exception:
                 counts["postgres.alerts"] = -1
 
