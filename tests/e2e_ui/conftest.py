@@ -179,7 +179,7 @@ class PipelineDataHelper:
         """Poll data_audit REST API until processed count meets threshold."""
         url = (
             f"http://127.0.0.1:{self._pipeline.data_audit_port}"
-            f"/api/v1/summary?tenant_id={self.tenant_id}"
+            f"/api/v1/audit/summary?tenant_id={self.tenant_id}"
         )
         deadline = time.monotonic() + timeout
         while True:

@@ -134,6 +134,9 @@ class DataApiModule(Module):
 
         # Proxy routes to backend services (must be before static catch-all)
         for prefix, service_key in [
+            ("/api/v1/query/alerts", "alerts"),
+            ("/api/v1/query/cases", "cases"),
+            ("/api/v1/query/audit", "audit"),
             ("/api/v1/alerts", "alerts"),
             ("/api/v1/cases", "cases"),
             ("/api/v1/clients", "clients"),
