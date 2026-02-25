@@ -107,7 +107,9 @@ docker compose -f "$COMPOSE_FILE" exec -T clickhouse \
 # ── Seed dev user ────────────────────────────────────────────────────────────
 
 info "Seeding dev user..."
-PW_HASH=$("$VENV" -c "from de_platform.pipeline.auth_middleware import hash_password; print(hash_password('admin123'))")
+
+# Pre-computed bcrypt hash of "admin123" — no runtime dependency needed
+DEV_PW_HASH='$2b$12$S1kkBNM8hYsUXk4F6P2SluHKyyrw49sI/TmBDKmYcfID.ckfU5YAC'
 
 docker compose -f "$COMPOSE_FILE" exec -T postgres \
     psql -U platform -d platform -q -c "
@@ -117,7 +119,7 @@ ON CONFLICT (tenant_id) DO NOTHING;
 " -c "
 DELETE FROM users WHERE user_id = 'dev_admin';
 INSERT INTO users (user_id, tenant_id, email, password_hash, role)
-VALUES ('dev_admin', 'dev_tenant', 'admin@dev.local', '${PW_HASH}', 'admin');
+VALUES ('dev_admin', 'dev_tenant', 'admin@dev.local', '${DEV_PW_HASH}', 'admin');
 "
 info "  Dev user: admin@dev.local / admin123"
 

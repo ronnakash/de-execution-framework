@@ -4,11 +4,25 @@ x-infra-env: &infra-env
   DB_POSTGRES_USER: platform
   DB_POSTGRES_PASSWORD: platform
   DB_POSTGRES_DATABASE: platform
+  # Named-instance Postgres URLs (services use --db <name>=postgres)
+  DB_WAREHOUSE_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_ALERTS_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_CLIENT_CONFIG_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_AUTH_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_ALERT_MANAGER_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_DATA_AUDIT_URL: postgresql://platform:platform@postgres:5432/platform
+  DB_TASK_SCHEDULER_URL: postgresql://platform:platform@postgres:5432/platform
   DB_CLICKHOUSE_HOST: clickhouse
   DB_CLICKHOUSE_PORT: "8123"
   DB_CLICKHOUSE_DATABASE: fraud_pipeline
   DB_CLICKHOUSE_USER: default
   DB_CLICKHOUSE_PASSWORD: clickhouse
+  # ClickHouse alias for data-api (--db events=clickhouse)
+  DB_EVENTS_HOST: clickhouse
+  DB_EVENTS_PORT: "8123"
+  DB_EVENTS_DATABASE: fraud_pipeline
+  DB_EVENTS_USER: default
+  DB_EVENTS_PASSWORD: clickhouse
   MQ_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   CACHE_REDIS_URL: redis://redis:6379/0
   FS_MINIO_ENDPOINT: minio:9000

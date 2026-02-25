@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-stress test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-stop infra-up infra-down setup setup-full docker-build docker-up docker-down docker-infra docker-app docker-logs docker-ps docker-clean
+.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-stress test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-native dev-k8s dev-stop infra-up infra-down setup setup-full docker-build docker-up docker-down docker-infra docker-app docker-logs docker-ps docker-clean
 
 PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
@@ -58,16 +58,24 @@ dev-ui:
 	cd ui && npm run dev
 
 dev:
-	./scripts/dev.sh
+	./scripts/dev-docker.sh
+
+dev-native:
+	./scripts/dev-native.sh
+
+dev-k8s:
+	./scripts/dev-k8s.sh
 
 dev-stop:
+	@echo "Stopping Docker Compose services..."
+	@docker compose --profile full down 2>/dev/null || true
+	@echo "Deleting kind cluster (if any)..."
+	@kind delete cluster --name de-platform 2>/dev/null || true
 	@if [ -f .dev-pids ]; then \
 		while IFS= read -r pid; do kill "$$pid" 2>/dev/null || true; done < .dev-pids; \
 		rm -f .dev-pids; \
-		echo "Services stopped."; \
-	else \
-		echo "No .dev-pids file found."; \
 	fi
+	@echo "All dev environments stopped."
 
 setup:
 	python3.12 -m venv .venv

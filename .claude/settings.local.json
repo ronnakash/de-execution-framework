@@ -42,7 +42,14 @@
       "Bash(source .venv/bin/activate && python -c \"import yaml; print\\('pyyaml available'\\)\" 2>&1)",
       "Bash(docker exec:*)",
       "Bash(node:*)",
-      "Bash(source .venv/bin/activate && python -c \"import asyncpg; print\\('asyncpg available'\\)\" 2>&1)"
+      "Bash(source .venv/bin/activate && python -c \"import asyncpg; print\\('asyncpg available'\\)\" 2>&1)",
+      "Bash(bash:*)",
+      "Bash(kind delete:*)",
+      "Bash(kubectl run:*)",
+      "Bash(kubectl exec:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(kubectl get:*)",
+      "Bash(curl:*)"
     ]
   }
 }
