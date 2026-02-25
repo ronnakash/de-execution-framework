@@ -119,3 +119,24 @@ CREATE TABLE IF NOT EXISTS alerts
 )
 ENGINE = MergeTree()
 ORDER BY (tenant_id, created_at);
+
+-- ── Schema migrations (idempotent ALTER for pre-existing tables) ────────────
+-- Phase 3 added client_id, ingestion_method, additional_fields columns.
+-- ALTER TABLE ADD COLUMN IF NOT EXISTS is safe to run on tables that already
+-- have these columns (no-op) or were created before Phase 3 (adds them).
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS client_id String DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ingestion_method String DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS additional_fields String DEFAULT '{}';
+
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS client_id String DEFAULT '';
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS ingestion_method String DEFAULT '';
+ALTER TABLE executions ADD COLUMN IF NOT EXISTS additional_fields String DEFAULT '{}';
+
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS client_id String DEFAULT '';
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ingestion_method String DEFAULT '';
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS additional_fields String DEFAULT '{}';
+
+ALTER TABLE duplicates ADD COLUMN IF NOT EXISTS client_id String DEFAULT '';
+
+ALTER TABLE normalization_errors ADD COLUMN IF NOT EXISTS client_id String DEFAULT '';

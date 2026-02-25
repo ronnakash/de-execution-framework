@@ -1,6 +1,8 @@
 """Integration tests for RedisCache service."""
 
+import json
 import os
+import time
 import uuid
 
 import pytest
@@ -47,9 +49,10 @@ def test_connect_disconnect():
     secrets = _make_secrets()
     c = RedisCache(secrets=secrets)
     c.connect()
-    assert c.is_connected()
+    assert c._client is not None
+    assert c.health_check()
     c.disconnect()
-    assert not c.is_connected()
+    assert c._client is None
 
 
 def test_get_set(cache):
@@ -82,23 +85,22 @@ def test_ttl(cache):
     k = _key(cache, "ttl_key")
     cache.set(k, "value", ttl=1)
     assert cache.get(k) == "value"
-    import time
     time.sleep(1.5)
     assert cache.get(k) is None
 
 
 def test_pubsub(cache):
-    """Test pub-sub via subscribe and publish."""
+    """Test pub-sub via subscribe_channel and publish_channel."""
     channel = _key(cache, "channel")
     messages = []
 
     def handler(msg):
         messages.append(msg)
 
-    cache.subscribe(channel, handler)
-    cache.publish(channel, {"action": "invalidate"})
+    cache.subscribe_channel(channel, handler)
+    # publish_channel expects a string
+    cache.publish_channel(channel, json.dumps({"action": "invalidate"}))
 
-    import time
     # Give pub-sub a moment to deliver
     deadline = time.monotonic() + 5.0
     while not messages and time.monotonic() < deadline:

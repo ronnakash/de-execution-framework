@@ -1,6 +1,7 @@
 """Integration tests for KafkaQueue service."""
 
 import os
+import time
 import uuid
 
 import pytest
@@ -53,18 +54,18 @@ def test_connect_disconnect():
     secrets = _make_secrets()
     mq = KafkaQueue(secrets)
     mq.connect()
-    assert mq.is_connected()
+    assert mq._producer is not None
+    assert mq._consumer is not None
     mq.disconnect()
-    assert not mq.is_connected()
+    assert mq._producer is None
+    assert mq._consumer is None
 
 
 def test_publish_and_consume(producer, consumer, topic_name):
     msg = {"id": "test-1", "data": "hello"}
     producer.publish(topic_name, msg)
 
-    # Subscribe and poll
-    consumer.subscribe(topic_name)
-    import time
+    # consume_one auto-subscribes if not already subscribed
     deadline = time.monotonic() + 15.0
     received = None
     while time.monotonic() < deadline:
@@ -80,8 +81,6 @@ def test_publish_multiple(producer, consumer, topic_name):
     for i in range(5):
         producer.publish(topic_name, {"id": f"msg-{i}"})
 
-    consumer.subscribe(topic_name)
-    import time
     deadline = time.monotonic() + 15.0
     messages = []
     while time.monotonic() < deadline and len(messages) < 5:
@@ -100,8 +99,6 @@ def test_keyed_publish(producer, consumer, topic_name):
     producer.publish(topic_name, {"id": "k1"}, key="tenant-a:SYM")
     producer.publish(topic_name, {"id": "k2"}, key="tenant-a:SYM")
 
-    consumer.subscribe(topic_name)
-    import time
     deadline = time.monotonic() + 15.0
     messages = []
     while time.monotonic() < deadline and len(messages) < 2:

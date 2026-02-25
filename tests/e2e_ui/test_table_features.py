@@ -18,15 +18,17 @@ def test_events_table_sort_by_column(logged_in_page, pipeline_data, step_logger)
     step_logger.log("Navigate to events", ui_step=True)
     page = logged_in_page
     page.goto(page.url.split("#")[0] + "#/events")
-    page.wait_for_load_state("networkidle", timeout=10000)
+    # Wait for the table to render (not just networkidle)
+    page.locator("th", has_text="Symbol").wait_for(state="visible", timeout=10000)
 
     step_logger.log("Click Symbol header to sort", ui_step=True)
     header = page.locator("th", has_text="Symbol")
     header.click()
-    page.wait_for_load_state("networkidle", timeout=5000)
 
-    # Sort indicator should appear
-    assert page.locator("th", has_text="Symbol").locator("span").count() > 0
+    # After click, React Query re-fetches (new sort key) — wait for table to re-render
+    sort_indicator = page.locator("th", has_text="Symbol").locator("span.text-primary")
+    sort_indicator.wait_for(state="attached", timeout=10000)
+    assert sort_indicator.count() > 0
 
 
 def test_events_table_sort_toggle(logged_in_page, pipeline_data, step_logger):
@@ -39,20 +41,21 @@ def test_events_table_sort_toggle(logged_in_page, pipeline_data, step_logger):
 
     page = logged_in_page
     page.goto(page.url.split("#")[0] + "#/events")
-    page.wait_for_load_state("networkidle", timeout=10000)
+    # Wait for the table to render
+    page.locator("th", has_text="Price").wait_for(state="visible", timeout=10000)
 
     header = page.locator("th", has_text="Price")
+    indicator = header.locator("span.text-primary")
 
     step_logger.log("First click: desc sort", ui_step=True)
     header.click()
-    page.wait_for_load_state("networkidle", timeout=5000)
+    indicator.wait_for(state="attached", timeout=10000)
+    assert indicator.text_content() == "\u25bc"  # down arrow (desc)
 
     step_logger.log("Second click: asc sort", ui_step=True)
     header.click()
-    page.wait_for_load_state("networkidle", timeout=5000)
-
-    # Sort indicator should still be present (toggled direction)
-    assert header.locator("span").count() > 0
+    indicator.wait_for(state="attached", timeout=10000)
+    assert indicator.text_content() == "\u25b2"  # up arrow (asc)
 
 
 def test_events_table_filter_by_text(logged_in_page, pipeline_data, step_logger):

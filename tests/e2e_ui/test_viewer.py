@@ -33,19 +33,51 @@ def _api_request(
         with urllib.request.urlopen(req, timeout=10) as resp:
             return resp.status, _json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        return e.code, _json.loads(e.read()) if e.read() else {}
+        body = e.read()
+        return e.code, _json.loads(body) if body else {}
 
 
 class ViewerUserManager:
     """Create and cleanup viewer users via the auth API."""
 
-    def __init__(self, auth_port: int, jwt_secret: str) -> None:
+    def __init__(self, auth_port: int, jwt_secret: str, postgres_url: str) -> None:
         self._auth_port = auth_port
         self._jwt_secret = jwt_secret
+        self._postgres_url = postgres_url
         self._created_users: list[str] = []
+
+    def _ensure_tenant(self, tenant_id: str) -> None:
+        """Insert tenant row into Postgres (idempotent)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _insert_in_thread() -> None:
+            import asyncio
+            import asyncpg
+
+            async def _do_insert() -> None:
+                conn = await asyncpg.connect(self._postgres_url)
+                try:
+                    await conn.execute(
+                        "INSERT INTO tenants (tenant_id, name) VALUES ($1, $2) "
+                        "ON CONFLICT (tenant_id) DO NOTHING",
+                        tenant_id, f"UI Test {tenant_id}",
+                    )
+                finally:
+                    await conn.close()
+
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(_do_insert())
+            finally:
+                loop.close()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(_insert_in_thread).result(timeout=10)
 
     def create_viewer(self, tenant_id: str, email: str, password: str) -> dict:
         from de_platform.pipeline.auth_middleware import encode_token
+
+        self._ensure_tenant(tenant_id)
 
         admin_token = encode_token(
             user_id="e2e_admin",
@@ -53,7 +85,7 @@ class ViewerUserManager:
             role="admin",
             secret=self._jwt_secret,
         )
-        url = f"http://127.0.0.1:{self._auth_port}/api/v1/users"
+        url = f"http://127.0.0.1:{self._auth_port}/api/v1/auth/users"
         status, body = _api_request(url, "POST", {
             "email": email,
             "password": password,
@@ -71,11 +103,12 @@ class ViewerUserManager:
 
 
 @pytest.fixture
-def viewer_manager(shared_pipeline):
+def viewer_manager(shared_pipeline, infra):
     """Provide a ViewerUserManager for creating test viewer users."""
     mgr = ViewerUserManager(
         shared_pipeline.auth_port,
         shared_pipeline.JWT_SECRET,
+        infra.postgres_url,
     )
     yield mgr
     mgr.cleanup()
@@ -113,7 +146,8 @@ def test_viewer_sees_own_tenant_alerts(
 
     events = [make_order(
         tenant_id=pipeline_data.tenant_id,
-        notional_usd=2_000_000,
+        quantity=10_000,
+        price=250.0,
     )]
     pipeline_data.ingest("order", events)
     pipeline_data.wait_for_rows("orders", 1)
@@ -154,7 +188,8 @@ def test_viewer_cannot_see_other_tenants(
     # Ingest data for a DIFFERENT tenant
     other_events = [make_order(
         tenant_id="OTHER_TENANT_ISOLATED",
-        notional_usd=500_000,
+        quantity=500,
+        price=100.0,
     )]
     pipeline_data.ingest("order", other_events)
 
