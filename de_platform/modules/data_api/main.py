@@ -258,6 +258,13 @@ class DataApiModule(Module):
         if tenant_id:
             body.setdefault("filters", {})["tenant_id"] = tenant_id
         rows = await self.events_db.fetch_all_async(f"SELECT * FROM {table}")
+        # Map generic 'id' column to type-specific ID names expected by the UI
+        _ID_MAP = {"orders": "order_id", "executions": "execution_id", "transactions": "transaction_id"}
+        id_alias = _ID_MAP.get(table)
+        if id_alias:
+            for row in rows:
+                if "id" in row and id_alias not in row:
+                    row[id_alias] = row["id"]
         return web.json_response(dumps=_dumps, data=handle_query(rows, body))
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────

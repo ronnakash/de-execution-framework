@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-starter
+  namespace: de-platform
+  labels:
+    app: kafka-starter
+    app.kubernetes.io/part-of: de-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kafka-starter
+  template:
+    metadata:
+      labels:
+        app: kafka-starter
+    spec:
+      containers:
+        - name: kafka-starter
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "kafka_starter",
+                    "--mq", "kafka", "--cache", "redis",
+                    "--health-port", "9110", "--log", "pretty"]
+          ports:
+            - containerPort: 9110
+              name: health
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9110
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kafka-starter-hpa
+  namespace: de-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kafka-starter
+  minReplicas: 1
+  maxReplicas: 12  # matches inbound topic partition count
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

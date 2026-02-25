@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: persistence
+  namespace: de-platform
+  labels:
+    app: persistence
+    app.kubernetes.io/part-of: de-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: persistence
+  template:
+    metadata:
+      labels:
+        app: persistence
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: persistence
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "persistence",
+                    "--db", "clickhouse=clickhouse", "--fs", "minio",
+                    "--mq", "kafka", "--health-port", "9102", "--log", "pretty"]
+          ports:
+            - containerPort: 9102
+              name: health
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9102
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9102
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: persistence-hpa
+  namespace: de-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: persistence
+  minReplicas: 1
+  maxReplicas: 12  # matches persistence topic partition count
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

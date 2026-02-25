@@ -81,6 +81,32 @@ class ClientConfigCache:
             "case_aggregation_minutes": 60,
         }
 
+    def get_topic_config(self, tenant_id: str) -> dict:
+        """Return per-client Kafka topic configuration.
+
+        Returns a dict with ``inbound_topic_prefix`` and ``error_topic``.
+        Empty strings mean the client uses shared default topics.
+        """
+        config = self._get_client(tenant_id)
+        if config:
+            return {
+                "inbound_topic_prefix": config.get("inbound_topic_prefix", ""),
+                "error_topic": config.get("error_topic", ""),
+            }
+        return {"inbound_topic_prefix": "", "error_topic": ""}
+
+    def get_all_client_ids(self) -> list[str]:
+        """Return all known tenant IDs from local cache.
+
+        This is a best-effort list — only includes tenants whose config
+        has been looked up or received via pub-sub since startup.
+        """
+        return [
+            k.split(":", 1)[1]
+            for k in self._local
+            if k.startswith("client_config:")
+        ]
+
     # ── Internal helpers ──────────────────────────────────────────────────
 
     def _get_client(self, tenant_id: str) -> dict | None:

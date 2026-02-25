@@ -11,6 +11,7 @@ Registered automatically via conftest.py or pyproject.toml.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -23,6 +24,22 @@ from typing import Any
 import pytest
 
 from tests.helpers.diagnostics import PipelineSnapshot, TestDiagnostics
+
+
+def _run_snapshot_sync(diagnostics: TestDiagnostics) -> PipelineSnapshot:
+    """Run the async snapshot() from a sync context (pytest hooks)."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Inside an already-running loop — create a new loop in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    asyncio.run, diagnostics.snapshot()
+                ).result(timeout=5)
+        return loop.run_until_complete(diagnostics.snapshot())
+    except Exception:
+        return asyncio.run(diagnostics.snapshot())
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -162,7 +179,7 @@ class PipelineReportPlugin:
         if self._diagnostics:
             try:
                 self._current.start_snapshot = snapshot_to_dict(
-                    self._diagnostics.snapshot()
+                    _run_snapshot_sync(self._diagnostics)
                 )
             except Exception:
                 pass
@@ -201,7 +218,7 @@ class PipelineReportPlugin:
 
         if self._diagnostics:
             try:
-                end_snap = self._diagnostics.snapshot()
+                end_snap = _run_snapshot_sync(self._diagnostics)
                 self._current.end_snapshot = snapshot_to_dict(end_snap)
             except Exception:
                 pass

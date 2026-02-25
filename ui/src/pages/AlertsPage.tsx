@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryApi } from "../api/client";
+import type { FilterValue } from "../api/client";
 import {
   updateCaseStatus,
   type Alert,
@@ -44,8 +45,12 @@ export default function AlertsPage() {
   const [casePage, setCasePage] = useState(1);
   const [casePageSize, setCasePageSize] = useState(50);
 
-  useEffect(() => setAlertPage(1), [tenantId, severity]);
-  useEffect(() => setCasePage(1), [tenantId]);
+  // Column filters
+  const [alertColFilters, setAlertColFilters] = useState<Record<string, FilterValue>>({});
+  const [caseColFilters, setCaseColFilters] = useState<Record<string, FilterValue>>({});
+
+  useEffect(() => setAlertPage(1), [tenantId, severity, alertColFilters]);
+  useEffect(() => setCasePage(1), [tenantId, caseColFilters]);
 
   const alertsQuery = useQuery({
     queryKey: ["alerts", tenantId, severity, alertSortBy, alertSortOrder, alertPage, alertPageSize],
@@ -54,6 +59,7 @@ export default function AlertsPage() {
         filters: {
           ...(tenantId ? { tenant_id: tenantId } : {}),
           ...(severity ? { severity } : {}),
+          ...alertColFilters,
         },
         sort_by: alertSortBy,
         sort_order: alertSortOrder,
@@ -68,6 +74,7 @@ export default function AlertsPage() {
       queryApi<Case>("cases", {
         filters: {
           ...(tenantId ? { tenant_id: tenantId } : {}),
+          ...caseColFilters,
         },
         sort_by: caseSortBy,
         sort_order: caseSortOrder,
@@ -108,22 +115,25 @@ export default function AlertsPage() {
       key: "severity",
       header: "Severity",
       sortable: true,
+      filterable: true,
+      filterType: "enum" as const,
+      filterOptions: ["low", "medium", "high", "critical"],
       render: (row: Alert) => <SeverityBadge severity={row.severity} />,
     },
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "algorithm", header: "Algorithm", sortable: true },
-    { key: "event_type", header: "Event Type" },
-    { key: "event_id", header: "Event ID" },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "algorithm", header: "Algorithm", sortable: true, filterable: true },
+    { key: "event_type", header: "Event Type", filterable: true },
+    { key: "event_id", header: "Event ID", filterable: true },
     { key: "description", header: "Description" },
-    { key: "created_at", header: "Created", sortable: true },
+    { key: "created_at", header: "Created", sortable: true, filterable: true, filterType: "date" as const },
   ];
 
   const caseColumns = [
-    { key: "case_id", header: "Case ID", sortable: true },
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "status", header: "Status", sortable: true },
-    { key: "alert_count", header: "Alerts", sortable: true },
-    { key: "created_at", header: "Created", sortable: true },
+    { key: "case_id", header: "Case ID", sortable: true, filterable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "status", header: "Status", sortable: true, filterable: true, filterType: "enum" as const, filterOptions: ["open", "closed"] },
+    { key: "alert_count", header: "Alerts", sortable: true, filterable: true, filterType: "number" as const },
+    { key: "created_at", header: "Created", sortable: true, filterable: true, filterType: "date" as const },
     {
       key: "actions",
       header: "",
@@ -225,6 +235,7 @@ export default function AlertsPage() {
             sortBy={alertSortBy}
             sortOrder={alertSortOrder}
             onSortChange={handleAlertSortChange}
+            onFilterChange={setAlertColFilters}
           />
         )
       ) : casesQuery.isLoading ? (
@@ -243,6 +254,7 @@ export default function AlertsPage() {
           sortBy={caseSortBy}
           sortOrder={caseSortOrder}
           onSortChange={handleCaseSortChange}
+          onFilterChange={setCaseColFilters}
         />
       )}
     </div>

@@ -84,7 +84,7 @@ class TestDiagnostics:
         self._memory_queue = memory_queue
         self._tenant_id = tenant_id
 
-    def snapshot(self) -> PipelineSnapshot:
+    async def snapshot(self) -> PipelineSnapshot:
         """Take a point-in-time snapshot of all pipeline state."""
         snap = PipelineSnapshot(timestamp=time.time())
 
@@ -94,7 +94,7 @@ class TestDiagnostics:
             snap.kafka_topics = self._memory_queue_state()
 
         # DB row counts
-        snap.db_tables = self._db_row_counts()
+        snap.db_tables = await self._db_row_counts()
 
         # Module health
         snap.module_status = self._module_health()
@@ -125,12 +125,15 @@ class TestDiagnostics:
 
     # ── Database ─────────────────────────────────────────────────────────
 
-    def _db_row_counts(self) -> dict[str, int]:
+    async def _db_row_counts(self) -> dict[str, int]:
         """Query row counts from databases.
 
         When ``tenant_id`` is set, counts are scoped to that tenant only,
         giving accurate per-test deltas.  Otherwise, sentinel events
         (from consumer readiness checks) are excluded.
+
+        Uses ``FINAL`` on ClickHouse queries to merge parts before counting,
+        giving accurate results at the cost of slightly slower queries.
         """
         counts: dict[str, int] = {}
 
@@ -148,13 +151,13 @@ class TestDiagnostics:
                 try:
                     if self._tenant_id:
                         rows = self._clickhouse_db.fetch_all(
-                            f"SELECT count(*) as cnt FROM {table}"
+                            f"SELECT count(*) as cnt FROM {table} FINAL"
                             " WHERE tenant_id = {p1:String}",
                             [self._tenant_id],
                         )
                     else:
                         rows = self._clickhouse_db.fetch_all(
-                            f"SELECT count(*) as cnt FROM {table}"
+                            f"SELECT count(*) as cnt FROM {table} FINAL"
                             " WHERE tenant_id != {p1:String}",
                             ["PIPELINE_SENTINEL"],
                         )
@@ -165,12 +168,12 @@ class TestDiagnostics:
         if self._postgres_db is not None:
             try:
                 if self._tenant_id:
-                    rows = self._postgres_db.fetch_all(
+                    rows = await self._postgres_db.fetch_all_async(
                         "SELECT count(*) as cnt FROM alerts WHERE tenant_id = $1",
                         [self._tenant_id],
                     )
                 else:
-                    rows = self._postgres_db.fetch_all(
+                    rows = await self._postgres_db.fetch_all_async(
                         "SELECT count(*) as cnt FROM alerts WHERE tenant_id != $1",
                         ["PIPELINE_SENTINEL"],
                     )

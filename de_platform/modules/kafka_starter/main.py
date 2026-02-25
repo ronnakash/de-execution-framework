@@ -33,11 +33,19 @@ from de_platform.pipeline.topics import (
     TX_NORMALIZATION,
 )
 from de_platform.pipeline.validation import group_errors_by_event, validate_events
+from de_platform.services.cache.interface import CacheInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 from de_platform.services.metrics.interface import MetricsInterface
+
+# Event type suffixes for per-client topics
+_EVENT_SUFFIXES = {
+    "orders": ("order", TRADE_NORMALIZATION),
+    "executions": ("execution", TRADE_NORMALIZATION),
+    "transactions": ("transaction", TX_NORMALIZATION),
+}
 
 
 class KafkaStarterModule(Module):
@@ -50,12 +58,17 @@ class KafkaStarterModule(Module):
         mq: MessageQueueInterface,
         lifecycle: LifecycleManager,
         metrics: MetricsInterface,
+        cache: CacheInterface | None = None,
     ) -> None:
         self.config = config
         self.logger = logger
         self.mq = mq
         self.lifecycle = lifecycle
         self.metrics = metrics
+        self._cache = cache
+        self._config_cache: Any = None
+        # Per-client error topic overrides: tenant_id -> error_topic
+        self._client_error_topics: dict[str, str] = {}
 
     async def initialize(self) -> None:
         self.log = self.logger.create()
@@ -71,11 +84,38 @@ class KafkaStarterModule(Module):
             executions_topic: ("execution", TRADE_NORMALIZATION),
             transactions_topic: ("transaction", TX_NORMALIZATION),
         }
+
+        # Set up per-client topic subscriptions from ClientConfigCache
+        if self._cache is not None:
+            from de_platform.pipeline.client_config_cache import ClientConfigCache
+            self._config_cache = ClientConfigCache(self._cache)
+            self._config_cache.start()
+            self.lifecycle.on_shutdown(lambda: self._config_cache.stop())
+            self._refresh_client_topics()
+
         self.log.info(
             "Kafka Starter initialized",
             module="kafka_starter",
             topics=list(self._routes.keys()),
         )
+
+    def _refresh_client_topics(self) -> None:
+        """Add per-client topic routes from ClientConfigCache."""
+        if self._config_cache is None:
+            return
+        for tenant_id in self._config_cache.get_all_client_ids():
+            topic_config = self._config_cache.get_topic_config(tenant_id)
+            prefix = topic_config.get("inbound_topic_prefix", "")
+            if prefix:
+                for suffix, (event_type, norm_topic) in _EVENT_SUFFIXES.items():
+                    client_topic = f"{prefix}{suffix}"
+                    if client_topic not in self._routes:
+                        self._routes[client_topic] = (event_type, norm_topic)
+                        self.log.info("Added client topic",
+                                      tenant_id=tenant_id, topic=client_topic)
+            error_topic = topic_config.get("error_topic", "")
+            if error_topic:
+                self._client_error_topics[tenant_id] = error_topic
 
     async def execute(self) -> int:
         self.log.info("Kafka Starter running", topics=list(self._routes.keys()))
@@ -109,6 +149,7 @@ class KafkaStarterModule(Module):
             msg["message_id"] = uuid.uuid4().hex
             msg["ingested_at"] = _now_iso()
             msg["event_type"] = event_type
+            msg["ingestion_method"] = "kafka"
             tenant_id = msg.get("tenant_id", "")
             symbol = msg.get("symbol", "")
             msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
@@ -120,7 +161,9 @@ class KafkaStarterModule(Module):
             tenant_id = raw_event.get("tenant_id", "")
             msg_key = f"{tenant_id}:" if tenant_id else None
             self.mq.publish(NORMALIZATION_ERRORS, err_msg, key=msg_key)
-            self.mq.publish(self.client_errors_topic, err_msg, key=msg_key)
+            # Use per-client error topic if configured, else shared topic
+            error_topic = self._client_error_topics.get(tenant_id, self.client_errors_topic)
+            self.mq.publish(error_topic, err_msg, key=msg_key)
 
         if valid:
             for validated in valid:

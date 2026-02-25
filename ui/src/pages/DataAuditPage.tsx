@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryApi } from "../api/client";
+import type { FilterValue } from "../api/client";
 import {
   fetchAuditSummary,
   type DailyAudit,
@@ -16,8 +17,9 @@ export default function DataAuditPage() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [columnFilters, setColumnFilters] = useState<Record<string, FilterValue>>({});
 
-  useEffect(() => setPage(1), [tenantId, startDate, endDate, source]);
+  useEffect(() => setPage(1), [tenantId, startDate, endDate, source, columnFilters]);
 
   const dailyQuery = useQuery({
     queryKey: ["audit-daily", tenantId, source, sortBy, sortOrder, page, pageSize],
@@ -26,6 +28,7 @@ export default function DataAuditPage() {
         filters: {
           ...(tenantId ? { tenant_id: tenantId } : {}),
           ...(source ? { source } : {}),
+          ...columnFilters,
         },
         sort_by: sortBy,
         sort_order: sortOrder,
@@ -50,10 +53,10 @@ export default function DataAuditPage() {
   };
 
   const columns = [
-    { key: "date", header: "Date", sortable: true },
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "event_type", header: "Event Type", sortable: true },
-    { key: "source", header: "Source", sortable: true },
+    { key: "date", header: "Date", sortable: true, filterable: true, filterType: "date" as const },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "event_type", header: "Event Type", sortable: true, filterable: true },
+    { key: "source", header: "Source", sortable: true, filterable: true, filterType: "enum" as const, filterOptions: ["rest", "kafka", "file"] },
     {
       key: "received_count",
       header: "Received",
@@ -188,6 +191,7 @@ export default function DataAuditPage() {
           sortBy={sortBy}
           sortOrder={sortOrder}
           onSortChange={handleSortChange}
+          onFilterChange={setColumnFilters}
         />
       )}
     </div>

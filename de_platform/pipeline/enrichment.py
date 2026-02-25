@@ -28,6 +28,21 @@ def compute_primary_key(
     return f"{tenant_id}_{event_type}_{event_id}_{date}"
 
 
+def _passthrough_new_fields(msg: dict[str, Any]) -> dict[str, Any]:
+    """Ensure new optional fields have defaults if not present."""
+    extras: dict[str, Any] = {}
+    if "client_id" not in msg:
+        extras["client_id"] = ""
+    if "ingestion_method" not in msg:
+        extras["ingestion_method"] = ""
+    if "additional_fields" not in msg:
+        extras["additional_fields"] = "{}"
+    elif isinstance(msg["additional_fields"], dict):
+        import json
+        extras["additional_fields"] = json.dumps(msg["additional_fields"])
+    return extras
+
+
 def enrich_trade_event(
     msg: dict[str, Any],
     currency_converter: CurrencyConverter,
@@ -46,6 +61,7 @@ def enrich_trade_event(
         "notional_usd": notional_usd,
         "normalized_at": normalized_at,
         "primary_key": primary_key,
+        **_passthrough_new_fields(msg),
     }
 
 
@@ -64,4 +80,5 @@ def enrich_transaction_event(
         "amount_usd": amount_usd,
         "normalized_at": normalized_at,
         "primary_key": primary_key,
+        **_passthrough_new_fields(msg),
     }

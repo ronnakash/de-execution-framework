@@ -1,0 +1,16 @@
+{
+  "name": "audit_calculator",
+  "display_name": "Audit Calculator",
+  "description": "Job that calculates audit summaries from ClickHouse processed/error/duplicate counts and audit_received table. Triggered by scheduler every 15 minutes or manually via data_audit /calculate endpoint.",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "tenant-id",
+      "description": "Tenant to calculate (optional, all tenants if omitted)",
+      "required": false,
+      "type": "string",
+      "default": ""
+    }
+  ]
+}

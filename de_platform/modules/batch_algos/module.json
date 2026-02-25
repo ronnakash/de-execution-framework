@@ -29,6 +29,13 @@
       "required": false,
       "type": "string",
       "default": ""
+    },
+    {
+      "name": "algos",
+      "description": "Comma-separated list of algorithms to run (overrides client config). Options: large_notional, velocity, suspicious_counterparty",
+      "required": false,
+      "type": "string",
+      "default": ""
     }
   ]
 }

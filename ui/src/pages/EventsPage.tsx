@@ -1,42 +1,44 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryApi } from "../api/client";
+import type { FilterValue } from "../api/client";
 import type { EventType } from "../api/events";
 import DataTable from "../components/DataTable";
+import type { Column } from "../components/DataTable";
 
 const EVENT_TYPES: EventType[] = ["orders", "executions", "transactions"];
 
-const COLUMN_DEFS: Record<EventType, { key: string; header: string; sortable?: boolean }[]> = {
+const COLUMN_DEFS: Record<EventType, Column<Record<string, unknown>>[]> = {
   orders: [
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "order_id", header: "Order ID", sortable: true },
-    { key: "symbol", header: "Symbol", sortable: true },
-    { key: "side", header: "Side", sortable: true },
-    { key: "quantity", header: "Quantity", sortable: true },
-    { key: "price", header: "Price", sortable: true },
-    { key: "notional_usd", header: "Notional USD", sortable: true },
-    { key: "transact_time", header: "Time", sortable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "order_id", header: "Order ID", sortable: true, filterable: true },
+    { key: "symbol", header: "Symbol", sortable: true, filterable: true },
+    { key: "side", header: "Side", sortable: true, filterable: true, filterType: "enum", filterOptions: ["buy", "sell"] },
+    { key: "quantity", header: "Quantity", sortable: true, filterable: true, filterType: "number" },
+    { key: "price", header: "Price", sortable: true, filterable: true, filterType: "number" },
+    { key: "notional_usd", header: "Notional USD", sortable: true, filterable: true, filterType: "number" },
+    { key: "transact_time", header: "Time", sortable: true, filterable: true, filterType: "date" },
   ],
   executions: [
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "execution_id", header: "Execution ID", sortable: true },
-    { key: "order_id", header: "Order ID", sortable: true },
-    { key: "symbol", header: "Symbol", sortable: true },
-    { key: "side", header: "Side", sortable: true },
-    { key: "quantity", header: "Quantity", sortable: true },
-    { key: "price", header: "Price", sortable: true },
-    { key: "notional_usd", header: "Notional USD", sortable: true },
-    { key: "transact_time", header: "Time", sortable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "execution_id", header: "Execution ID", sortable: true, filterable: true },
+    { key: "order_id", header: "Order ID", sortable: true, filterable: true },
+    { key: "symbol", header: "Symbol", sortable: true, filterable: true },
+    { key: "side", header: "Side", sortable: true, filterable: true, filterType: "enum", filterOptions: ["buy", "sell"] },
+    { key: "quantity", header: "Quantity", sortable: true, filterable: true, filterType: "number" },
+    { key: "price", header: "Price", sortable: true, filterable: true, filterType: "number" },
+    { key: "notional_usd", header: "Notional USD", sortable: true, filterable: true, filterType: "number" },
+    { key: "transact_time", header: "Time", sortable: true, filterable: true, filterType: "date" },
   ],
   transactions: [
-    { key: "tenant_id", header: "Tenant", sortable: true },
-    { key: "transaction_id", header: "Transaction ID", sortable: true },
-    { key: "transaction_type", header: "Type", sortable: true },
-    { key: "amount", header: "Amount", sortable: true },
-    { key: "currency", header: "Currency", sortable: true },
-    { key: "amount_usd", header: "Amount USD", sortable: true },
-    { key: "counterparty", header: "Counterparty", sortable: true },
-    { key: "transact_time", header: "Time", sortable: true },
+    { key: "tenant_id", header: "Tenant", sortable: true, filterable: true },
+    { key: "transaction_id", header: "Transaction ID", sortable: true, filterable: true },
+    { key: "transaction_type", header: "Type", sortable: true, filterable: true },
+    { key: "amount", header: "Amount", sortable: true, filterable: true, filterType: "number" },
+    { key: "currency", header: "Currency", sortable: true, filterable: true },
+    { key: "amount_usd", header: "Amount USD", sortable: true, filterable: true, filterType: "number" },
+    { key: "counterparty", header: "Counterparty", sortable: true, filterable: true },
+    { key: "transact_time", header: "Time", sortable: true, filterable: true, filterType: "date" },
   ],
 };
 
@@ -48,17 +50,22 @@ export default function EventsPage() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [columnFilters, setColumnFilters] = useState<Record<string, FilterValue>>({});
 
-  useEffect(() => setPage(1), [eventType, tenantId, date]);
+  useEffect(() => { setPage(1); setColumnFilters({}); }, [eventType]);
+  useEffect(() => setPage(1), [tenantId, date, columnFilters]);
+
+  const filters: Record<string, FilterValue> = {
+    ...(tenantId ? { tenant_id: tenantId } : {}),
+    ...(date ? { date } : {}),
+    ...columnFilters,
+  };
 
   const query = useQuery({
-    queryKey: ["events", eventType, tenantId, date, sortBy, sortOrder, page, pageSize],
+    queryKey: ["events", eventType, tenantId, date, sortBy, sortOrder, page, pageSize, columnFilters],
     queryFn: () =>
       queryApi<Record<string, unknown>>(`events/${eventType}`, {
-        filters: {
-          ...(tenantId ? { tenant_id: tenantId } : {}),
-          ...(date ? { date } : {}),
-        },
+        filters,
         sort_by: sortBy,
         sort_order: sortOrder,
         page,
@@ -141,6 +148,7 @@ export default function EventsPage() {
           sortBy={sortBy}
           sortOrder={sortOrder}
           onSortChange={handleSortChange}
+          onFilterChange={setColumnFilters}
         />
       )}
     </div>

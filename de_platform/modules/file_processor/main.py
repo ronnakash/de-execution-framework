@@ -25,6 +25,7 @@ from de_platform.modules.base import Module
 from de_platform.pipeline.audit_accumulator import AuditAccumulator
 from de_platform.pipeline.serialization import _now_iso, error_to_dict
 from de_platform.pipeline.topics import (
+    AUDIT_FILE_UPLOADS,
     NORMALIZATION_ERRORS,
     TRADE_NORMALIZATION,
     TX_NORMALIZATION,
@@ -126,6 +127,7 @@ class FileProcessorModule(Module):
                 msg["message_id"] = uuid.uuid4().hex
                 msg["ingested_at"] = _now_iso()
                 msg["event_type"] = self.event_type
+                msg["ingestion_method"] = "file"
                 tenant_id = msg.get("tenant_id", "")
                 symbol = msg.get("symbol", "")
                 msg_key = f"{tenant_id}:{symbol}" if tenant_id else None
@@ -159,6 +161,19 @@ class FileProcessorModule(Module):
             self.metrics.counter("events_ingested_total", value=float(len(valid)), tags={"service": "file_processor", "event_type": self.event_type, "method": "file"})
             if errors:
                 self.metrics.counter("events_errors_total", value=float(len(errors)), tags={"service": "file_processor", "event_type": self.event_type})
+
+            # Publish file upload record to audit_file_uploads topic
+            tenant_ids_for_audit = {e.get("tenant_id", "unknown") for e in events}
+            file_tenant_audit = tenant_ids_for_audit.pop() if len(tenant_ids_for_audit) == 1 else "mixed"
+            self.mq.publish(AUDIT_FILE_UPLOADS, {
+                "tenant_id": file_tenant_audit,
+                "event_type": self.event_type,
+                "ingestion_method": "file",
+                "file_name": self.file_path,
+                "event_count": len(valid),
+                "uploaded_at": _now_iso(),
+            })
+
             self.log.info(
                 "File processed",
                 file_path=self.file_path,

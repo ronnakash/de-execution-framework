@@ -196,6 +196,7 @@ def dto_to_message_from_raw(raw: dict[str, Any], event_type: str) -> dict[str, A
     msg["message_id"] = uuid.uuid4().hex
     msg["ingested_at"] = _now_iso()
     msg["event_type"] = event_type
+    msg["ingestion_method"] = "rest"
     return msg
 
 

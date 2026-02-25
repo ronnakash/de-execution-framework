@@ -55,12 +55,84 @@ def parse_query_request(body: dict) -> QueryRequest:
     )
 
 
+def _match_filter(row_val: Any, spec: Any) -> bool:
+    """Check if a single row value matches a filter spec.
+
+    Supported operators (when spec is a dict):
+        eq, neq, gt, gte, lt, lte, contains, in, is_null, is_not_null
+
+    When spec is a plain string/number, it is treated as ``eq`` (backward compat).
+    """
+    if not isinstance(spec, dict):
+        # Backward compat: plain value -> exact string match
+        return str(row_val or "") == str(spec)
+
+    for op, operand in spec.items():
+        if op == "eq":
+            if str(row_val or "") != str(operand):
+                return False
+        elif op == "neq":
+            if str(row_val or "") == str(operand):
+                return False
+        elif op == "gt":
+            try:
+                if not (float(row_val) > float(operand)):
+                    return False
+            except (TypeError, ValueError):
+                if not (str(row_val or "") > str(operand)):
+                    return False
+        elif op == "gte":
+            try:
+                if not (float(row_val) >= float(operand)):
+                    return False
+            except (TypeError, ValueError):
+                if not (str(row_val or "") >= str(operand)):
+                    return False
+        elif op == "lt":
+            try:
+                if not (float(row_val) < float(operand)):
+                    return False
+            except (TypeError, ValueError):
+                if not (str(row_val or "") < str(operand)):
+                    return False
+        elif op == "lte":
+            try:
+                if not (float(row_val) <= float(operand)):
+                    return False
+            except (TypeError, ValueError):
+                if not (str(row_val or "") <= str(operand)):
+                    return False
+        elif op == "contains":
+            if str(operand).lower() not in str(row_val or "").lower():
+                return False
+        elif op == "in":
+            if not isinstance(operand, list):
+                operand = [operand]
+            if str(row_val or "") not in [str(v) for v in operand]:
+                return False
+        elif op == "is_null":
+            if operand and row_val is not None:
+                return False
+        elif op == "is_not_null":
+            if operand and row_val is None:
+                return False
+    return True
+
+
 def apply_filters(rows: list[dict], filters: dict[str, Any]) -> list[dict]:
-    """Filter rows by exact string match on each key. Skips None and empty-string values."""
+    """Filter rows using exact match or operator-based filters.
+
+    Filter values can be:
+      - Plain string/number: exact string match (backward compat)
+      - Dict with operators: ``{"gte": 100, "lte": 500}``
+
+    Supported operators: eq, neq, gt, gte, lt, lte, contains, in, is_null, is_not_null.
+    Skips None and empty-string plain values.
+    """
     for key, value in filters.items():
         if value is None or value == "":
             continue
-        rows = [r for r in rows if str(r.get(key, "")) == str(value)]
+        rows = [r for r in rows if _match_filter(r.get(key), value)]
     return rows
 
 

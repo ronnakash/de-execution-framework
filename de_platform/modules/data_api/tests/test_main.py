@@ -175,3 +175,66 @@ async def test_auth_events_tenant_scoped() -> None:
         data = await resp.json()
         assert len(data) == 1
         assert data[0]["id"] == "o1"
+
+
+# -- ID mapping tests --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_events_orders_has_order_id() -> None:
+    """Query endpoint maps 'id' to 'order_id' for orders table."""
+    db = MemoryDatabase()
+    module, db = await _setup_module(db=db)
+    db.bulk_insert("orders", [
+        {"id": "o1", "tenant_id": "t1", "symbol": "AAPL"},
+    ])
+
+    app = module._create_app()
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post(
+            "/api/v1/query/events/orders",
+            json={"filters": {"tenant_id": "t1"}},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["data"][0]["order_id"] == "o1"
+
+
+@pytest.mark.asyncio
+async def test_query_events_executions_has_execution_id() -> None:
+    """Query endpoint maps 'id' to 'execution_id' for executions table."""
+    db = MemoryDatabase()
+    module, db = await _setup_module(db=db)
+    db.bulk_insert("executions", [
+        {"id": "e1", "tenant_id": "t1"},
+    ])
+
+    app = module._create_app()
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post(
+            "/api/v1/query/events/executions",
+            json={"filters": {"tenant_id": "t1"}},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["data"][0]["execution_id"] == "e1"
+
+
+@pytest.mark.asyncio
+async def test_query_events_transactions_has_transaction_id() -> None:
+    """Query endpoint maps 'id' to 'transaction_id' for transactions table."""
+    db = MemoryDatabase()
+    module, db = await _setup_module(db=db)
+    db.bulk_insert("transactions", [
+        {"id": "tx1", "tenant_id": "t1"},
+    ])
+
+    app = module._create_app()
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.post(
+            "/api/v1/query/events/transactions",
+            json={"filters": {"tenant_id": "t1"}},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["data"][0]["transaction_id"] == "tx1"

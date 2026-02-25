@@ -119,16 +119,38 @@ class StepLogger:
         self._steps: list[StepRecord] = []
 
     @asynccontextmanager
-    async def step(self, name: str, description: str = ""):
-        """Context manager to record a named step."""
+    async def step(
+        self,
+        name: str,
+        description: str = "",
+        ui_step: bool = False,
+        settle_ms: int = 0,
+    ):
+        """Context manager to record a named step.
+
+        Args:
+            name: Human-readable step name.
+            description: Optional longer description.
+            ui_step: When ``True``, capture a UI screenshot at the end of the
+                step.  Defaults to ``False`` so non-UI steps never produce
+                irrelevant screenshots.
+            settle_ms: Milliseconds to wait before taking the *before*
+                snapshot.  Gives async backends (e.g. ClickHouse) time to
+                flush writes from the previous step so that deltas align
+                with the step that caused them.
+        """
+        import asyncio
+
         record = StepRecord(name=name, description=description)
         record.start_time = time.time()
 
-        # Take before snapshot
+        # Take before snapshot (with optional settle delay)
         if self._diagnostics:
+            if settle_ms > 0:
+                await asyncio.sleep(settle_ms / 1000)
             try:
                 record.snapshot_before = _snapshot_to_dict(
-                    self._diagnostics.snapshot()
+                    await self._diagnostics.snapshot()
                 )
             except Exception:
                 pass
@@ -146,7 +168,7 @@ class StepLogger:
             if self._diagnostics:
                 try:
                     record.snapshot_after = _snapshot_to_dict(
-                        self._diagnostics.snapshot()
+                        await self._diagnostics.snapshot()
                     )
                 except Exception:
                     pass
@@ -157,8 +179,8 @@ class StepLogger:
                     record.snapshot_before, record.snapshot_after
                 )
 
-            # Capture UI screenshot if a Playwright page is available
-            if self._page is not None:
+            # Capture UI screenshot only when this is a UI step
+            if ui_step and self._page is not None:
                 try:
                     screenshot_bytes = self._page.screenshot(
                         type="jpeg", quality=80, full_page=True,
@@ -191,15 +213,18 @@ class StepLogger:
         except Exception:
             pass  # Never fail the test due to screenshots
 
-    def log(self, name: str, description: str = "") -> None:
+    def log(self, name: str, description: str = "", ui_step: bool = False) -> None:
         """Record a simple step without snapshots (sync-friendly).
 
         Screenshots are *deferred*: calling ``log()`` captures a screenshot
         for the **previous** step (the page now shows its result).  Call
         ``finalize()`` after the last step to capture its screenshot.
+
+        Only captures screenshots when ``ui_step=True``.
         """
         # Capture screenshot for the PREVIOUS step (page now shows its result)
-        self._capture_deferred_screenshot()
+        if ui_step:
+            self._capture_deferred_screenshot()
 
         record = StepRecord(name=name, description=description)
         record.start_time = time.time()

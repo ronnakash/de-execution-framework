@@ -63,8 +63,24 @@ export async function fetchApi<T>(
   return res.json();
 }
 
+/** Filter value: plain string for exact match, or operator object for advanced filters. */
+export type FilterValue =
+  | string
+  | {
+      eq?: string;
+      neq?: string;
+      gt?: string | number;
+      gte?: string | number;
+      lt?: string | number;
+      lte?: string | number;
+      contains?: string;
+      in?: string[];
+      is_null?: boolean;
+      is_not_null?: boolean;
+    };
+
 export interface QueryParams {
-  filters?: Record<string, string>;
+  filters?: Record<string, FilterValue>;
   sort_by?: string | null;
   sort_order?: "asc" | "desc";
   page?: number;

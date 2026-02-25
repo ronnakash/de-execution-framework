@@ -38,7 +38,8 @@
       "Bash(source .venv/bin/activate && python -m pytest tests/unit/test_step_logger.py -v 2>&1)",
       "Bash(git stash:*)",
       "Bash(source .venv/bin/activate && ruff check tests/e2e_ui/conftest.py 2>&1)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(source .venv/bin/activate && python -c \"import yaml; print\\('pyyaml available'\\)\" 2>&1)"
     ]
   }
 }

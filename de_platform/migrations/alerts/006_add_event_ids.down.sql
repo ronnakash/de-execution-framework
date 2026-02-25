@@ -1,0 +1,1 @@
+ALTER TABLE alerts DROP COLUMN IF EXISTS event_ids;

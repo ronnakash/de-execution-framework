@@ -1,0 +1,2 @@
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS inbound_topic_prefix TEXT DEFAULT '';
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS error_topic TEXT DEFAULT '';

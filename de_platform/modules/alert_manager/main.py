@@ -185,6 +185,10 @@ class AlertManagerModule(Module):
         if isinstance(row.get("created_at"), str):
             dt = datetime.fromisoformat(row["created_at"])
             row["created_at"] = dt.replace(tzinfo=None)
+        # Ensure event_ids is persisted as a list
+        if "event_ids" not in row:
+            event_id = row.get("event_id", "")
+            row["event_ids"] = [event_id] if event_id else []
         return row
 
     # ── Case aggregation ──────────────────────────────────────────────────
@@ -197,6 +201,28 @@ class AlertManagerModule(Module):
         severity = alert.get("severity", "medium")
         created_at = alert.get("created_at", "")
 
+        # Use transaction + row locking to prevent race conditions
+        # when multiple consumers process alerts concurrently.
+        if hasattr(self.db, "transaction"):
+            async with self.db.transaction():
+                await self._aggregate_into_case_inner(
+                    tenant_id, algorithm, event_id, alert_id, severity, created_at,
+                )
+        else:
+            # MemoryDatabase (unit tests) — no transaction support needed
+            await self._aggregate_into_case_inner(
+                tenant_id, algorithm, event_id, alert_id, severity, created_at,
+            )
+
+    async def _aggregate_into_case_inner(
+        self,
+        tenant_id: str,
+        algorithm: str,
+        event_id: str,
+        alert_id: str,
+        severity: str,
+        created_at: Any,
+    ) -> None:
         case = await self._find_matching_case(tenant_id, algorithm, event_id)
 
         if case:
@@ -234,8 +260,10 @@ class AlertManagerModule(Module):
                         return case
 
         # Rule 1: same algorithm, within aggregation window
+        # Use FOR UPDATE to lock rows when running under Postgres transactions
+        # (MemoryDatabase ignores FOR UPDATE — its parser only reads the table name)
         tenant_cases = await self.db.fetch_all_async(
-            "SELECT * FROM cases WHERE tenant_id = $1", [tenant_id]
+            "SELECT * FROM cases WHERE tenant_id = $1 FOR UPDATE", [tenant_id]
         )
         open_cases = [c for c in tenant_cases if c.get("status") == "open"]
 
@@ -299,19 +327,32 @@ class AlertManagerModule(Module):
             key=lambda s: _SEVERITY_ORDER.get(s, 0),
         )
         alert_dt = self._to_naive_dt(alert_time) or datetime.utcnow()
+        new_title = _generate_title(new_count, algorithms, case["tenant_id"])
 
-        updated = dict(case)
-        updated["alert_count"] = new_count
-        updated["algorithms"] = algorithms
-        updated["severity"] = new_severity
-        updated["last_alert_at"] = alert_dt
-        updated["title"] = _generate_title(new_count, algorithms, case["tenant_id"])
-        updated["updated_at"] = datetime.utcnow()
+        if hasattr(self.db, "transaction"):
+            # Postgres: atomic UPDATE (avoids DELETE+INSERT non-atomic window)
+            await self.db.execute_async(
+                "UPDATE cases SET alert_count = $1, algorithms = $2, severity = $3, "
+                "last_alert_at = $4, title = $5, updated_at = $6 "
+                "WHERE case_id = $7",
+                [new_count, algorithms, new_severity, alert_dt, new_title,
+                 datetime.utcnow(), case_id],
+            )
+        else:
+            # MemoryDatabase: DELETE+INSERT (single-threaded, no race)
+            updated = dict(case)
+            updated["alert_count"] = new_count
+            updated["algorithms"] = algorithms
+            updated["severity"] = new_severity
+            updated["last_alert_at"] = alert_dt
+            updated["title"] = new_title
+            updated["updated_at"] = datetime.utcnow()
 
-        await self.db.execute_async(
-            "DELETE FROM cases WHERE case_id = $1", [case_id],
-        )
-        await self.db.insert_one_async("cases", updated)
+            await self.db.execute_async(
+                "DELETE FROM cases WHERE case_id = $1", [case_id],
+            )
+            await self.db.insert_one_async("cases", updated)
+
         await self.db.insert_one_async("case_alerts", {
             "case_id": case_id, "alert_id": alert_id,
         })
@@ -484,12 +525,22 @@ class AlertManagerModule(Module):
                 content_type="application/json",
             )
 
-        updated = dict(case)
-        updated["status"] = new_status
-        updated["updated_at"] = datetime.utcnow()
-
-        await self.db.execute_async("DELETE FROM cases WHERE case_id = $1", [case_id])
-        await self.db.insert_one_async("cases", updated)
+        if hasattr(self.db, "transaction"):
+            # Postgres: atomic UPDATE
+            await self.db.execute_async(
+                "UPDATE cases SET status = $1, updated_at = $2 WHERE case_id = $3",
+                [new_status, datetime.utcnow(), case_id],
+            )
+            updated = dict(case)
+            updated["status"] = new_status
+            updated["updated_at"] = datetime.utcnow()
+        else:
+            # MemoryDatabase: DELETE+INSERT (single-threaded, no race)
+            updated = dict(case)
+            updated["status"] = new_status
+            updated["updated_at"] = datetime.utcnow()
+            await self.db.execute_async("DELETE FROM cases WHERE case_id = $1", [case_id])
+            await self.db.insert_one_async("cases", updated)
 
         self.log.info("Case status updated", case_id=case_id, status=new_status)
         return web.json_response(dumps=_dumps, data=updated)

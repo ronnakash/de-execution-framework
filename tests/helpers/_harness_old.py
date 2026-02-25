@@ -893,11 +893,11 @@ class RealInfraHarness:
     def _filter_by_tenant(self, rows: list[dict]) -> list[dict]:
         return [r for r in rows if r.get("tenant_id") == self.tenant_id]
 
-    def _snapshot_text(self) -> str:
+    async def _snapshot_text(self) -> str:
         if self.diagnostics is None:
             return ""
         try:
-            snap = self.diagnostics.snapshot()
+            snap = await self.diagnostics.snapshot()
             return TestDiagnostics.format_snapshot(snap)
         except Exception as e:
             return f"(diagnostics failed: {e})"
@@ -934,7 +934,7 @@ class RealInfraHarness:
             return (
                 f"wait_for_rows('{table}', expected={expected}) "
                 f"timed out after {timeout}s (got {len(filtered)} "
-                f"for tenant {self.tenant_id})\n\n{self._snapshot_text()}"
+                f"for tenant {self.tenant_id})"
             )
 
         await poll_until(_check, timeout=timeout, on_timeout=_on_timeout)
@@ -946,9 +946,10 @@ class RealInfraHarness:
         await asyncio.sleep(timeout)
         rows = self._ch_fetch_tenant(table)
         if len(rows) != known:
+            snap = await self._snapshot_text()
             raise AssertionError(
                 f"Expected {known} rows in {table} to remain unchanged, "
-                f"got {len(rows)}\n\n{self._snapshot_text()}"
+                f"got {len(rows)}\n\n{snap}"
             )
 
     async def fetch_alerts(self) -> list[dict]:
@@ -966,9 +967,10 @@ class RealInfraHarness:
             if any(predicate(r) for r in rows):
                 return rows
             if loop.time() > deadline:
+                snap = await self._snapshot_text()
                 raise TimeoutError(
                     f"wait_for_alert: condition not met within {timeout}s"
-                    f"\n\n{self._snapshot_text()}"
+                    f"\n\n{snap}"
                 )
             await asyncio.sleep(0.1)
 

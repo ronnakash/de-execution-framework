@@ -68,6 +68,12 @@ class BatchAlgosModule(Module):
             SuspiciousCounterpartyAlgo(suspicious_ids=suspicious_ids),
         ]
 
+        # Parse --algos override (comma-separated algo names)
+        algo_override = self.config.get("algos", "")
+        self._algo_override: set[str] | None = None
+        if algo_override:
+            self._algo_override = {a.strip() for a in algo_override.split(",") if a.strip()}
+
         from de_platform.pipeline.client_config_cache import ClientConfigCache
 
         self.config_cache = ClientConfigCache(self.cache)
@@ -78,7 +84,8 @@ class BatchAlgosModule(Module):
             get_algo_config=self._get_algo_config,
         )
 
-        self.log.info("Batch algos initialized")
+        self.log.info("Batch algos initialized",
+                      algo_override=list(self._algo_override) if self._algo_override else None)
 
     def _get_window_config(self, tenant_id: str) -> WindowConfig:
         config = self.config_cache._get_client(tenant_id)
@@ -90,6 +97,11 @@ class BatchAlgosModule(Module):
         return WindowConfig(window_size_minutes=5, window_slide_minutes=1)
 
     def _get_algo_config(self, tenant_id: str, algo_name: str) -> tuple[bool, dict]:
+        if self._algo_override is not None:
+            # CLI override: force-enable specified algos regardless of client config
+            enabled = algo_name in self._algo_override
+            thresholds = self.config_cache.get_algo_thresholds(tenant_id, algo_name)
+            return enabled, thresholds
         enabled = self.config_cache.is_algo_enabled(tenant_id, algo_name)
         thresholds = self.config_cache.get_algo_thresholds(tenant_id, algo_name)
         return enabled, thresholds
