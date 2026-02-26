@@ -10,7 +10,7 @@ import uuid
 from aiohttp import web
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.services.cache.interface import CacheInterface
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
@@ -20,7 +20,7 @@ from de_platform.services.logger.interface import LoggingInterface
 CACHE_TTL = 60
 
 
-class ApiGatewayModule(AsyncModule):
+class ApiGatewayModule(Module):
     log: LoggingInterface
 
     def __init__(

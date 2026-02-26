@@ -11,6 +11,7 @@ REGISTRY: dict[str, dict[str, str]] = {
     "db": {
         "memory": "de_platform.services.database.memory_database.MemoryDatabase",
         "postgres": "de_platform.services.database.postgres_database.PostgresDatabase",
+        "clickhouse": "de_platform.services.database.clickhouse_database.ClickHouseDatabase",
     },
     "fs": {
         "memory": "de_platform.services.filesystem.memory_filesystem.MemoryFileSystem",

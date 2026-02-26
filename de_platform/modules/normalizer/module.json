@@ -1,0 +1,8 @@
+{
+  "name": "normalizer",
+  "display_name": "Event Normalizer",
+  "description": "Normalizes, enriches, and deduplicates events from normalization topics",
+  "type": "service",
+  "version": "1.0.0",
+  "args": []
+}

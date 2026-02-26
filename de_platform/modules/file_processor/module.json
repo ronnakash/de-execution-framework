@@ -1,0 +1,21 @@
+{
+  "name": "file_processor",
+  "display_name": "File Processor Job",
+  "description": "Reads a JSON or JSONL file of events, validates them, and publishes valid events to normalization topics. Errors are published to the normalization_errors topic.",
+  "type": "job",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "file-path",
+      "description": "Path to the JSON or JSONL file containing events.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "event-type",
+      "description": "Type of events in the file: order, execution, or transaction.",
+      "required": true,
+      "type": "string"
+    }
+  ]
+}

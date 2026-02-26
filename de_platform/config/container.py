@@ -39,6 +39,9 @@ class Container:
                     f"Parameter '{name}' of {cls.__name__}.__init__ has no type hint"
                 )
             if hint not in self._registry:
+                # For parameters with a default value, skip if the type is not registered
+                if param.default is not inspect.Parameter.empty:
+                    continue
                 raise TypeError(
                     f"No registration found for type {hint.__name__!r} "
                     f"(parameter '{name}' of {cls.__name__}.__init__)"

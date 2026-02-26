@@ -1,0 +1,36 @@
+# Job template — triggered by task-scheduler or manually via kubectl.
+# Runs the batch_algos module as a one-shot job.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-algos
+  namespace: de-platform
+  labels:
+    app: batch-algos
+    app.kubernetes.io/part-of: de-platform
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: batch-algos
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: batch-algos
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "batch_algos",
+                    "--db", "warehouse=clickhouse", "--db", "alerts=postgres",
+                    "--cache", "redis", "--log", "pretty"]
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"

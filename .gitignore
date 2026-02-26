@@ -22,12 +22,14 @@ __pycache__/
 .vscode/
 
 # Claude
-.claude/
-CLAUDE.md
+# .claude/
+# CLAUDE.md
 todo.md
 plan.md
 pipeline_design.md
 pipeline_plan.md
+e2e_plan.md
+docs/e2e_real_infra_plan.md
 
 # Design docs
 data_platform_design_doc.md
@@ -36,10 +38,24 @@ data_platform_phase2_spec.md
 # Environment files
 .env
 .env.*
+.envfiles/
+!.envfiles/devcontainer.env
+
+# Dev server
+.dev-pids
+.dev-logs/
+
+# Test reports
+reports/
 
 # Distribution / packaging
 dist/
 build/
+
+# Terraform
+deploy/terraform-k8s/.terraform/
+deploy/terraform-k8s/terraform.tfstate
+deploy/terraform-k8s/terraform.tfstate.backup
 
 # OS files
 .DS_Store

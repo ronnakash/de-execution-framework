@@ -1,0 +1,82 @@
+/* ── Reset / Base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f4f5f7; color: #222; }
+
+/* ── Header & Nav ──────────────────────────────────────────────────────── */
+header {
+  background: #1a1a2e; color: #fff;
+  padding: 0.9rem 2rem; display: flex; align-items: center; gap: 2rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,.3);
+}
+header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: .02em; }
+nav { display: flex; gap: 0.5rem; }
+.tab-btn {
+  background: transparent; color: #aaa;
+  border: 1px solid #555; border-radius: 4px;
+  padding: 0.35rem 1rem; cursor: pointer; font-size: 0.875rem;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover  { background: #2a2a4e; color: #fff; border-color: #777; }
+.tab-btn.active { background: #4361ee; color: #fff; border-color: #4361ee; }
+
+/* ── Main ──────────────────────────────────────────────────────────────── */
+main { padding: 1.5rem 2rem; }
+.tab-panel        { display: none; }
+.tab-panel.active { display: block; }
+.panel-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; color: #333; }
+
+/* ── Filters ───────────────────────────────────────────────────────────── */
+.filters {
+  display: flex; gap: 0.5rem; align-items: center;
+  margin-bottom: 1rem; flex-wrap: wrap;
+  background: #fff; padding: 0.75rem 1rem;
+  border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+.filters input, .filters select {
+  padding: 0.4rem 0.75rem; border: 1px solid #ccc; border-radius: 4px;
+  font-size: 0.875rem; background: #fff; min-width: 140px;
+}
+.filters input:focus, .filters select:focus { outline: none; border-color: #4361ee; }
+.filters button {
+  padding: 0.4rem 1rem; border: none; border-radius: 4px;
+  cursor: pointer; background: #4361ee; color: #fff; font-size: 0.875rem;
+  transition: background 0.15s;
+}
+.filters button:hover { background: #3a56d4; }
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  background: #fff; border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+table { width: 100%; border-collapse: collapse; }
+thead { background: #e8eaf6; }
+th {
+  padding: 0.6rem 1rem; text-align: left;
+  font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: .04em; color: #555; white-space: nowrap;
+}
+td {
+  padding: 0.55rem 1rem; border-top: 1px solid #f0f0f0;
+  font-size: 0.875rem; white-space: nowrap;
+}
+tr:hover td { background: #f5f6ff; }
+
+/* ── Severity badges ───────────────────────────────────────────────────── */
+.badge {
+  display: inline-block; padding: 0.15rem 0.5rem;
+  border-radius: 3px; font-size: 0.7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.severity-low      { background: #d4edda; color: #155724; }
+.severity-medium   { background: #fff3cd; color: #856404; }
+.severity-high     { background: #ffe5c0; color: #7d3c00; }
+.severity-critical { background: #f8d7da; color: #721c24; }
+.severity-unknown  { background: #e2e3e5; color: #383d41; }
+
+/* ── Utilities ─────────────────────────────────────────────────────────── */
+.hidden     { display: none !important; }
+.empty-msg  { padding: 1.5rem; text-align: center; color: #999; font-style: italic; }
+.error-msg  { padding: 0.75rem 1rem; background: #f8d7da; color: #721c24;
+              border-radius: 4px; margin-bottom: 0.75rem; font-size: 0.875rem; }

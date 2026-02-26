@@ -8,7 +8,7 @@ import time
 import uuid
 
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.services.database.interface import DatabaseInterface
 from de_platform.services.filesystem.interface import FileSystemInterface
 from de_platform.services.lifecycle.lifecycle_manager import LifecycleManager
@@ -17,7 +17,7 @@ from de_platform.services.logger.interface import LoggingInterface
 from de_platform.services.message_queue.interface import MessageQueueInterface
 
 
-class StreamIngestModule(AsyncModule):
+class StreamIngestModule(Module):
     log: LoggingInterface
 
     def __init__(
@@ -62,17 +62,21 @@ class StreamIngestModule(AsyncModule):
     async def execute(self) -> int:
         """Main loop: poll for messages, buffer, flush on size/time threshold."""
         while not self.lifecycle.is_shutting_down:
-            msg = self.mq.consume_one(self.topic)
-            if msg is not None:
-                self._buffer.append(msg)
-            else:
-                # Yield to event loop when no messages available
-                await asyncio.sleep(0.01)
+            try:
+                msg = self.mq.consume_one(self.topic)
+                if msg is not None:
+                    self._buffer.append(msg)
+                else:
+                    # Yield to event loop when no messages available
+                    await asyncio.sleep(0.01)
 
-            if len(self._buffer) >= self.batch_size:
-                self._flush_buffer()
-            elif self._buffer and self._time_to_flush():
-                self._flush_buffer()
+                if len(self._buffer) >= self.batch_size:
+                    self._flush_buffer()
+                elif self._buffer and self._time_to_flush():
+                    self._flush_buffer()
+            except Exception as exc:
+                self.log.error("Processing error", error=str(exc))
+                await asyncio.sleep(0.01)
 
         return 0
 

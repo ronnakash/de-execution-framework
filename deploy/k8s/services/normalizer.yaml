@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: normalizer
+  namespace: de-platform
+  labels:
+    app: normalizer
+    app.kubernetes.io/part-of: de-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: normalizer
+  template:
+    metadata:
+      labels:
+        app: normalizer
+    spec:
+      containers:
+        - name: normalizer
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "normalizer",
+                    "--db", "warehouse=postgres", "--cache", "redis",
+                    "--mq", "kafka", "--health-port", "9101", "--log", "pretty"]
+          ports:
+            - containerPort: 9101
+              name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: normalizer
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: trade_normalization,tx_normalization
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9101
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9101
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: normalizer-hpa
+  namespace: de-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: normalizer
+  minReplicas: 1
+  maxReplicas: 12  # matches trade_normalization partition count
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

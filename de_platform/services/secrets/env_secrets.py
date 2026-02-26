@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 from de_platform.services.secrets.interface import SecretsInterface

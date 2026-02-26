@@ -1,0 +1,11 @@
+{
+  "name": "persistence",
+  "display_name": "Persistence Service",
+  "description": "Writes events to ClickHouse and filesystem, buffered per tenant",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {"name": "flush-interval", "type": "integer", "default": 60, "required": false},
+    {"name": "flush-threshold", "type": "integer", "default": 100000, "required": false}
+  ]
+}

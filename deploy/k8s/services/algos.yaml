@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: algos
+  namespace: de-platform
+  labels:
+    app: algos
+    app.kubernetes.io/part-of: de-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: algos
+  template:
+    metadata:
+      labels:
+        app: algos
+    spec:
+      containers:
+        - name: algos
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "algos",
+                    "--cache", "redis", "--mq", "kafka",
+                    "--health-port", "9103", "--log", "pretty",
+                    "--suspicious-counterparty-ids", "bad-cp-1"]
+          ports:
+            - containerPort: 9103
+              name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: algos
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: trades_algos,transactions_algos
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9103
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9103
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+# algos reads from trades_algos (6 partitions) and transactions_algos (6 partitions)
+# Kafka key partitioning by tenant_id ensures sticky routing for SlidingWindowEngine state
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: algos-hpa
+  namespace: de-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: algos
+  minReplicas: 1
+  maxReplicas: 6  # matches algos topic partition count
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -4,19 +4,26 @@ version = "0.1.0"
 description = "Data Platform Execution Framework"
 requires-python = ">=3.10"
 dependencies = [
-    "asyncpg>=0.29.0",
-    "redis>=5.0",
-    "confluent-kafka>=2.3",
     "aiohttp>=3.9",
-    "minio>=7.0",
     "prometheus-client>=0.20",
+    "pyjwt>=2.8",
+    "bcrypt>=4.0",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]
+infra = [
+    "asyncpg>=0.29.0",
+    "redis>=5.0",
+    "confluent-kafka>=2.3",
+    "minio>=7.0",
+    "clickhouse-connect>=0.7",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "testcontainers[postgres,redis,kafka]>=4.0",
+    "pytest-xdist>=3.5",
+    "playwright>=1.40",
     "ruff>=0.8",
     "mypy>=1.13",
 ]
@@ -30,6 +37,13 @@ include = ["de_platform*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests requiring real infrastructure services (Postgres, ClickHouse, Redis, Kafka, MinIO)",
+    "e2e: full pipeline end-to-end tests with all services and module subprocesses",
+    "e2e_ui: browser-based UI tests requiring Playwright and running backend services",
+    "e2e_k8s: E2E tests running against a local Kubernetes cluster (kind)",
+    "stress: stress and performance benchmark tests requiring running pipeline infrastructure",
+]
 
 [tool.ruff]
 target-version = "py310"

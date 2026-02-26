@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-manager
+  namespace: de-platform
+  labels:
+    app: alert-manager
+    app.kubernetes.io/part-of: de-platform
+spec:
+  # Keep at 1 replica — case aggregation requires DB-level locking.
+  # Scale carefully with distributed locking.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-manager
+  template:
+    metadata:
+      labels:
+        app: alert-manager
+    spec:
+      containers:
+        - name: alert-manager
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "alert_manager",
+                    "--db", "alerts=postgres", "--mq", "kafka",
+                    "--cache", "redis", "--port", "8007",
+                    "--health-port", "9104", "--log", "pretty"]
+          ports:
+            - containerPort: 8007
+              name: http
+            - containerPort: 9104
+              name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: alert-manager
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: alerts
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9104
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-manager
+  namespace: de-platform
+spec:
+  selector:
+    app: alert-manager
+  ports:
+    - name: http
+      port: 8007
+      targetPort: 8007

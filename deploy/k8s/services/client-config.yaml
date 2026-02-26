@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-config
+  namespace: de-platform
+  labels:
+    app: client-config
+    app.kubernetes.io/part-of: de-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: client-config
+  template:
+    metadata:
+      labels:
+        app: client-config
+    spec:
+      containers:
+        - name: client-config
+          image: de-platform:latest
+          command: ["python", "-m", "de_platform", "run", "client_config",
+                    "--db", "client_config=postgres", "--cache", "redis",
+                    "--port", "8003", "--health-port", "9106", "--log", "pretty"]
+          ports:
+            - containerPort: 8003
+              name: http
+            - containerPort: 9106
+              name: health
+          envFrom:
+            - configMapRef:
+                name: de-platform-config
+            - secretRef:
+                name: de-platform-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health/startup
+              port: 9106
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-config
+  namespace: de-platform
+spec:
+  selector:
+    app: client-config
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: client-config-hpa
+  namespace: de-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: client-config
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

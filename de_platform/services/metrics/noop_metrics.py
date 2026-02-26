@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from de_platform.services.metrics.interface import MetricsInterface
 
 

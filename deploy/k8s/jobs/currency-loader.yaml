@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: currency-loader
+  namespace: de-platform
+  labels:
+    app: currency-loader
+    app.kubernetes.io/part-of: de-platform
+spec:
+  schedule: "0 6 * * *"  # daily at 06:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: currency-loader
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: currency-loader
+              image: de-platform:latest
+              command: ["python", "-m", "de_platform", "run", "currency_loader",
+                        "--db", "warehouse=postgres", "--cache", "redis",
+                        "--log", "pretty"]
+              envFrom:
+                - configMapRef:
+                    name: de-platform-config
+                - secretRef:
+                    name: de-platform-secrets
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "250m"
+                  memory: "256Mi"

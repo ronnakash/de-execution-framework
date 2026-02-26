@@ -56,6 +56,28 @@ def test_raises_on_missing_type_hint():
         container.resolve(MissingHint)
 
 
+class WithOptionalDep:
+    def __init__(self, dep: DummyDep | None = None) -> None:
+        self.dep = dep
+
+
+def test_resolve_skips_optional_param_when_not_registered():
+    container = Container()
+    obj = container.resolve(WithOptionalDep)
+    assert obj.dep is None
+
+
+def test_resolve_injects_optional_param_when_registered():
+    container = Container()
+    dep = DummyDep()
+    # Register under the union type that get_type_hints returns
+    from typing import get_type_hints
+    hint = get_type_hints(WithOptionalDep.__init__)["dep"]
+    container.register_instance(hint, dep)
+    obj = container.resolve(WithOptionalDep)
+    assert obj.dep is dep
+
+
 def test_has_returns_correct_values():
     container = Container()
     assert container.has(DummyDep) is False

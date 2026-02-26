@@ -1,0 +1,85 @@
+name: CI
+on:
+  push:
+    branches: [main, data_pipeline]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - run: python -m ruff check de_platform/
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - run: python -m pytest de_platform/ tests/unit/ -v -m "not integration and not e2e"
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev,infra]'
+      - name: Start infrastructure
+        run: docker compose --profile infra up -d
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 30); do
+            docker compose --profile infra ps --format json | python -c "
+          import sys, json
+          services = json.loads(sys.stdin.read())
+          healthy = all(s.get('Health','') == 'healthy' for s in services if 'Health' in s)
+          sys.exit(0 if healthy else 1)
+          " && break || sleep 2
+          done
+      - name: Run migrations
+        run: |
+          for ns in warehouse alerts client_config auth alert_manager data_audit task_scheduler; do
+            python -m de_platform migrate up $ns --db postgres
+          done
+      - name: Run integration tests
+        run: python -m pytest tests/integration/ -v -m integration --tb=short
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev,infra]'
+      - name: Start infrastructure
+        run: docker compose --profile infra up -d
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 30); do
+            docker compose --profile infra ps --format json | python -c "
+          import sys, json
+          services = json.loads(sys.stdin.read())
+          healthy = all(s.get('Health','') == 'healthy' for s in services if 'Health' in s)
+          sys.exit(0 if healthy else 1)
+          " && break || sleep 2
+          done
+      - name: Run migrations
+        run: |
+          for ns in warehouse alerts client_config auth alert_manager data_audit task_scheduler; do
+            python -m de_platform migrate up $ns --db postgres
+          done
+      - name: Run E2E tests
+        run: python -m pytest tests/e2e/ -v -m e2e --tb=short

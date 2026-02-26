@@ -1,0 +1,16 @@
+{
+  "name": "rest_starter",
+  "display_name": "REST API Starter",
+  "description": "aiohttp REST API that receives batches of orders, executions, and transactions, validates them, and publishes valid events to Kafka normalization topics.",
+  "type": "service",
+  "version": "1.0.0",
+  "args": [
+    {
+      "name": "port",
+      "description": "HTTP port to listen on.",
+      "required": false,
+      "type": "integer",
+      "default": 8001
+    }
+  ]
+}

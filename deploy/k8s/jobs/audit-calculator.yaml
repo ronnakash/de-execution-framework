@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: audit-calculator
+  namespace: de-platform
+  labels:
+    app: audit-calculator
+    app.kubernetes.io/part-of: de-platform
+spec:
+  schedule: "*/15 * * * *"  # every 15 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: audit-calculator
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: audit-calculator
+              image: de-platform:latest
+              command: ["python", "-m", "de_platform", "run", "audit_calculator",
+                        "--db", "data_audit=postgres", "--mq", "kafka",
+                        "--log", "pretty"]
+              envFrom:
+                - configMapRef:
+                    name: de-platform-config
+                - secretRef:
+                    name: de-platform-secrets
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"

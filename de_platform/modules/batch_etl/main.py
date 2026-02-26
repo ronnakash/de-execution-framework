@@ -32,7 +32,7 @@ from typing import Any
 
 from de_platform.config.container import Container
 from de_platform.config.context import ModuleConfig
-from de_platform.modules.base import AsyncModule
+from de_platform.modules.base import Module
 from de_platform.services.logger.factory import LoggerFactory
 from de_platform.services.logger.interface import LoggingInterface
 from de_platform.shared.data_stream import DataStream
@@ -46,7 +46,7 @@ def _import_class(dotted_path: str) -> type:
     return getattr(module, class_name)
 
 
-class BatchEtlModule(AsyncModule):
+class BatchEtlModule(Module):
     log: LoggingInterface
 
     def __init__(
