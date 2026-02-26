@@ -20,6 +20,7 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes"]
           ports:
             - containerPort: 6379
           resources:
@@ -34,6 +35,17 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 5
             periodSeconds: 5
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

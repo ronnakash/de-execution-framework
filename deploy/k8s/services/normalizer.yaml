@@ -25,6 +25,11 @@ spec:
           ports:
             - containerPort: 9101
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: normalizer
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: trade_normalization,tx_normalization
           envFrom:
             - configMapRef:
                 name: de-platform-config

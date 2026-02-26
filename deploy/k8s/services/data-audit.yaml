@@ -27,6 +27,11 @@ spec:
               name: http
             - containerPort: 9108
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: data-audit
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: audit_counts,orders_persistence,executions_persistence,transactions_persistence,normalization_errors,duplicates
           envFrom:
             - configMapRef:
                 name: de-platform-config

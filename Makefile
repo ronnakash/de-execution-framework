@@ -1,4 +1,4 @@
-.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-stress test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-native dev-k8s dev-stop infra-up infra-down setup setup-full docker-build docker-up docker-down docker-infra docker-app docker-logs docker-ps docker-clean
+.PHONY: test test-unit test-integration test-e2e test-e2e-ui test-e2e-k8s test-stress test-all local-unit local-e2e lint format run migrate build-ui dev-ui dev dev-native dev-k8s dev-stop infra-up infra-down setup setup-full docker-build docker-up docker-down docker-infra docker-app docker-logs docker-ps docker-clean
 
 PYTHON ?= python3
 PYTEST = $(PYTHON) -m pytest
@@ -17,6 +17,9 @@ test-e2e:
 
 test-e2e-ui:
 	$(PYTEST) tests/e2e_ui/ -v -m e2e_ui --tb=short
+
+test-e2e-k8s:
+	$(PYTEST) tests/e2e_k8s/ -v -m e2e_k8s --tb=short
 
 test-stress:
 	$(PYTEST) tests/stress/ -v -m stress --tb=short

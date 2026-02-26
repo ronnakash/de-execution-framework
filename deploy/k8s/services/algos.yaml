@@ -21,10 +21,16 @@ spec:
           image: de-platform:latest
           command: ["python", "-m", "de_platform", "run", "algos",
                     "--cache", "redis", "--mq", "kafka",
-                    "--health-port", "9103", "--log", "pretty"]
+                    "--health-port", "9103", "--log", "pretty",
+                    "--suspicious-counterparty-ids", "bad-cp-1"]
           ports:
             - containerPort: 9103
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: algos
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: trades_algos,transactions_algos
           envFrom:
             - configMapRef:
                 name: de-platform-config

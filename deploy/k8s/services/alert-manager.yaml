@@ -30,6 +30,11 @@ spec:
               name: http
             - containerPort: 9104
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: alert-manager
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: alerts
           envFrom:
             - configMapRef:
                 name: de-platform-config

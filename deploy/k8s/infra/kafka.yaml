@@ -56,8 +56,9 @@ spec:
                 - sh
                 - -c
                 - kafka-topics --bootstrap-server localhost:9092 --list
-            initialDelaySeconds: 20
+            initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 10
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka/data
@@ -118,6 +119,17 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          volumeMounts:
+            - name: zk-data
+              mountPath: /var/lib/zookeeper/data
+  volumeClaimTemplates:
+    - metadata:
+        name: zk-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
 ---
 apiVersion: v1
 kind: Service

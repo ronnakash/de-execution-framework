@@ -3,6 +3,7 @@
 Re-exports all public names for backward compatibility.
 """
 
+from tests.helpers.harness.external_pipeline import ExternalPipeline
 from tests.helpers.harness.memory import MemoryHarness
 from tests.helpers.harness.protocol import PipelineHarness, _free_port, poll_until
 from tests.helpers.harness.real_infra import RealInfraHarness
@@ -16,6 +17,7 @@ __all__ = [
     "PipelineHarness",
     "MemoryHarness",
     "SharedPipeline",
+    "ExternalPipeline",
     "RealInfraHarness",
     "poll_until",
     "_free_port",

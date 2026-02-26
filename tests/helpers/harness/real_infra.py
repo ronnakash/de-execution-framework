@@ -217,6 +217,8 @@ class RealInfraHarness:
         )
         return {"Authorization": f"Bearer {token}"}
 
+    _NO_HEADERS = object()  # sentinel: "caller didn't specify headers"
+
     async def call_service(
         self,
         service: str,
@@ -225,10 +227,15 @@ class RealInfraHarness:
         *,
         json: Any = None,
         params: dict[str, str] | None = None,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str] | None | object = _NO_HEADERS,
     ) -> tuple[int, Any]:
         port = getattr(self._pipeline, self._SERVICE_PORT_ATTRS[service])
         url = f"http://127.0.0.1:{port}{path}"
+        # Auto-inject auth headers when caller didn't specify any,
+        # so tests work against K8s where JWT_SECRET is always set.
+        # Pass headers=None explicitly to send NO auth (e.g. to test 401).
+        if headers is self._NO_HEADERS:
+            headers = self._auth_headers()
         async with aiohttp.ClientSession() as session:
             resp = await session.request(
                 method, url, json=json, params=params, headers=headers,

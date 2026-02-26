@@ -1,11 +1,8 @@
-"""E2E tests: authentication service.
+"""K8s E2E tests: authentication service.
 
-Tests login, token refresh, logout, user info, and user management
-against the auth module running with JWT middleware enabled.
+Same as tests/e2e/test_auth.py — all tests are HTTP-only.
 
-7 tests.
-
-Requires: ``pytest -m e2e`` or ``make test-e2e``.
+Requires: ``pytest -m e2e_k8s`` or ``make test-e2e-k8s``.
 """
 
 from __future__ import annotations
@@ -16,7 +13,7 @@ import pytest
 
 from tests.helpers.harness import RealInfraHarness
 
-pytestmark = [pytest.mark.e2e]
+pytestmark = [pytest.mark.e2e_k8s]
 
 
 @pytest.fixture

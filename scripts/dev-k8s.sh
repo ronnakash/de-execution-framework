@@ -146,7 +146,22 @@ EOF
 
 # ── Deploy infrastructure ───────────────────────────────────────────────────
 
-info "Deploying infrastructure (postgres, redis, kafka, clickhouse)..."
+info "Deploying infrastructure (postgres, redis, kafka, clickhouse, minio)..."
+
+# volumeClaimTemplates cannot be added to existing StatefulSets via kubectl apply.
+# Delete-and-recreate any StatefulSet whose manifest has volumeClaimTemplates that
+# don't match what's deployed.  --cascade=orphan keeps pods running during recreation.
+for sts in redis zookeeper minio; do
+    if kubectl get statefulset "$sts" -n "$NAMESPACE" &>/dev/null; then
+        manifest_vct=$(grep -c "volumeClaimTemplates" "$K8S_DIR/infra/"*".yaml" 2>/dev/null | grep "$sts" || true)
+        deployed_vct=$(kubectl get statefulset "$sts" -n "$NAMESPACE" -o jsonpath='{.spec.volumeClaimTemplates}' 2>/dev/null)
+        if [ -z "$deployed_vct" ] || [ "$deployed_vct" = "null" ]; then
+            info "  Recreating $sts StatefulSet (adding persistent storage)..."
+            kubectl delete statefulset "$sts" -n "$NAMESPACE" --cascade=orphan 2>/dev/null || true
+        fi
+    fi
+done
+
 kubectl apply -f "$K8S_DIR/infra/"
 
 # Patch kafka for single-node local dev:
@@ -174,7 +189,7 @@ kubectl patch statefulset kafka -n "$NAMESPACE" --type='strategic' -p '
 }'
 
 info "Waiting for infrastructure pods to be ready..."
-for svc in postgres redis kafka clickhouse; do
+for svc in postgres redis kafka clickhouse minio; do
     kubectl rollout status statefulset/"$svc" -n "$NAMESPACE" --timeout=180s 2>/dev/null || \
         warn "$svc not fully ready yet"
 done
@@ -240,6 +255,25 @@ for deploy in $(kubectl get deployments -n "$NAMESPACE" -o name 2>/dev/null); do
         2>/dev/null || true
 done
 
+# Patch persistence for low-latency flushing (test-e2e-k8s needs fast flushes)
+info "Patching persistence for low-latency flush..."
+kubectl patch deployment persistence -n "$NAMESPACE" --type='json' -p='[
+  {"op": "replace", "path": "/spec/template/spec/containers/0/command",
+   "value": ["python", "-m", "de_platform", "run", "persistence",
+             "--db", "clickhouse=clickhouse", "--fs", "minio",
+             "--mq", "kafka", "--health-port", "9102", "--log", "pretty",
+             "--flush-threshold", "1", "--flush-interval", "0"]}
+]' 2>/dev/null || true
+
+# Patch data-audit for low-latency flush
+kubectl patch deployment data-audit -n "$NAMESPACE" --type='json' -p='[
+  {"op": "replace", "path": "/spec/template/spec/containers/0/command",
+   "value": ["python", "-m", "de_platform", "run", "data_audit",
+             "--db", "data_audit=postgres", "--mq", "kafka",
+             "--health-port", "9108", "--log", "pretty", "--port", "8005",
+             "--flush-threshold", "1", "--flush-interval", "1"]}
+]' 2>/dev/null || true
+
 info "Waiting for service deployments to roll out..."
 for deploy in rest-starter normalizer persistence algos alert-manager data-api client-config auth data-audit task-scheduler; do
     kubectl rollout status deployment/"$deploy" -n "$NAMESPACE" --timeout=120s 2>/dev/null || \
@@ -257,6 +291,7 @@ port_forward() {
     echo $! >> "$PID_FILE"
 }
 
+# Application services
 port_forward rest-starter   8001 8001
 port_forward data-api       8002 8002
 port_forward client-config  8003 8003
@@ -265,6 +300,12 @@ port_forward data-audit     8005 8005
 port_forward task-scheduler 8006 8006
 port_forward alert-manager  8007 8007
 port_forward grafana        3000 3000
+
+# Infrastructure services (for test-e2e-k8s and local debugging)
+port_forward postgres       5432 5432
+port_forward clickhouse     8123 8123
+port_forward redis          6379 6379
+port_forward minio          9000 9000
 
 sleep 2
 

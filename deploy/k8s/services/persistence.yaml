@@ -26,6 +26,11 @@ spec:
           ports:
             - containerPort: 9102
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: persistence
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: orders_persistence,executions_persistence,transactions_persistence,duplicates,normalization_errors
           envFrom:
             - configMapRef:
                 name: de-platform-config
@@ -44,12 +49,14 @@ spec:
               port: 9102
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /health/startup
               port: 9102
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 5
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler

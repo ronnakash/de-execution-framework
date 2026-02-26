@@ -25,6 +25,11 @@ spec:
           ports:
             - containerPort: 9110
               name: health
+          env:
+            - name: MQ_KAFKA_GROUP_ID
+              value: kafka-starter
+            - name: MQ_KAFKA_SUBSCRIBE_TOPICS
+              value: client_orders,client_executions,client_transactions
           envFrom:
             - configMapRef:
                 name: de-platform-config
