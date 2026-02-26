@@ -19,7 +19,7 @@ test-e2e-ui:
 	$(PYTEST) tests/e2e_ui/ -v -m e2e_ui --tb=short
 
 test-e2e-k8s:
-	$(PYTEST) tests/e2e_k8s/ -v -m e2e_k8s --tb=short
+	$(PYTEST) tests/e2e_k8s/ -v -m e2e_k8s --tb=short -n auto
 
 test-stress:
 	$(PYTEST) tests/stress/ -v -m stress --tb=short
