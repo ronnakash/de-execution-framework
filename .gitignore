@@ -52,6 +52,11 @@ reports/
 dist/
 build/
 
+# Terraform
+deploy/terraform-k8s/.terraform/
+deploy/terraform-k8s/terraform.tfstate
+deploy/terraform-k8s/terraform.tfstate.backup
+
 # OS files
 .DS_Store
 Thumbs.db

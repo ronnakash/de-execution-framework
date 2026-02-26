@@ -55,7 +55,9 @@
       "Bash(kubectl patch:*)",
       "Bash(kubectl rollout:*)",
       "Bash(echo:*)",
-      "Bash(kubectl delete:*)"
+      "Bash(kubectl delete:*)",
+      "Bash(terraform version:*)",
+      "Bash(terraform:*)"
     ]
   }
 }
